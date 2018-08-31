@@ -15,7 +15,7 @@ Installation-Execution Tutorial for Carla Autonomous Vehicle Simulator (v0.8.4) 
 	d. Connect your GitHub account by clicking “CONNECT” and follow the instructions.
 	e. You might receive an email within a couple of minutes of linking the two accounts from the Unreal GitHub account inviting you to join the developer group. Accept that. OTHERWISE, you should be ready for the next steps.
 
-5. The actual downloading is done in the terminal and via “git” commands. If you don’t have git, in the Linux terminal, then get it by:
+5. The actual downloading is done in the terminal and via “git” commands. If you don’t have git, in the Linux terminal:
 	a. sudo apt-get update 
 	b. sudo apt-get upgrade 
 	c. sudo apt-get install git
@@ -37,10 +37,11 @@ Installation-Execution Tutorial for Carla Autonomous Vehicle Simulator (v0.8.4) 
         * NOTE: these '&&' separated three commands will probably take 1 to 2 hours
         (source: https://carla.readthedocs.io/en/stable/how_to_build_on_linux/)
 
-10. Next, you need to install pip and then pip install the requisite Carla python modules.
-        a. If you don't have pip installed, then: sudo apt install python-pip
-        a. 'cd'  into ~/Carla/PythonClient
-        b. pip install -r requirements.txt
+10. Next, you need to install pip3 and then pip3 install the requisite Carla python modules.
+        a. sudo apt-get install python3-pip
+        b. 'cd'  into ~/Carla/PythonClient
+        c. sudo apt-get python3-install
+        d. pip3 install -r requirements.txt
         (source: https://github.com/carla-simulator/carla/blob/stable/Docs/connecting_the_client.md)
 
 11. That should be the last of the dependencies; you should be ready to run the simulation. Do so by:
