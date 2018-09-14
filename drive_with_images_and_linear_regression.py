@@ -1,58 +1,16 @@
 """
-This program instantiates a client through which this program can communicate 
-with the server. All that this program does is tell the car to 
-go forward in a random direction at about 5 mph, go in reverse if there 
-was a collision, or reset the car if the car gets stuck.
+This file get images from the simulation, reads them into this program, and 
+feeds them into a two linear regressors: one for the throttle and one for 
+the steering angle.
 
-The purpose of this file is to become familiar with connecting a client
-to an extant server, as well as to understand how to use the car state and 
-car controls for the simulation. As such, there is no image gathering and
-no machine learning used here.
-
-Based on: https://github.com/Microsoft/AirSim/blob/master/docs/apis.md
-
-09/14/2018 - EG
+The purpose of this file is to learn how to get and use images from the 
+simulation and learn how to batch learn (which is necessary given that the 
+data is a continuous stream). 
 """
-
 
 import airsim
 import time
 import numpy as np
-
-
-def get_reverse_controls(car_controls):
-	"""
-	Set the car controls to reverse
-	:param car_state: structure that comes from airsim.CarControls()
-	
-	:returns: car control struct w/ values to reverse the car
-	"""
-	car_controls.throttle = -0.3
-	car_controls.is_manual_gear = True
-	car_controls.manual_gear = -1  # this means reverse to the API
-	car_controls.steering = 0 # back up straight
-
-	return car_controls
-
-
-def get_forward_controls(car_controls, car_state):
-	"""
-	Get controls to put the car into a forward motion. The steering 
-	direction is random.
-
-	:param car_controls: structure that comes from airsim.CarControls()
-
-	:returns: car control struct w/ values to drive the car forward
-	"""
-	if car_state.speed < 5.0:
-		car_controls.throttle = 0.5
-	else:
-		car_controls.throttle = 0
-
-	car_controls.is_manual_gear = False
-	car_controls.steering = np.random.normal(loc=0.0, scale=0.2)
-	
-	return car_controls
 
 
 
