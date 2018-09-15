@@ -28,7 +28,8 @@ car_controls = airsim.CarControls()
 # collision info struct init
 collision_info = client.simGetCollisionInfo() 
 
-y = np.array(NUM_IMAGES_TO_REMEMBER, 1)
+# preallocate what memory will need to track images and targets
+y = np.empty((NUM_IMAGES_TO_REMEMBER, 1))
 while True:
         sim_img_response = client.simGetImages([airsim.ImageRequest(0, airsim.ImageType.DepthVis),
                                                 airsim.ImageRequest(1, airsim.ImageType.DepthPlanner, True)])
