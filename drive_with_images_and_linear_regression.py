@@ -1,7 +1,7 @@
 """
-This file get images from the simulation, reads them into this program, and 
-feeds them into a two linear regressors: one for the throttle and one for 
-the steering angle.
+This file runs a client that get images from the simulation, reads them
+into this program, and feeds them into a two linear regressors: one for
+the throttle and one for the steering angle.
 
 The purpose of this file is to learn how to get and use images from the 
 simulation and learn how to batch learn (which is necessary given that the 
@@ -10,49 +10,36 @@ data is a continuous stream).
 
 import airsim
 import time
-import numpy as np
+
+# how many past images to remember
+NUM_IMAGES_TO_REMEMBER = 2e12  #2e12 means remember the past 204.8 seconds @ record interval=0.5 (20fps ?)
+RETRAIN_EVERY_N_IMAGES = 2e6   #2e6 means retrain every 12.8 seconds @ record interval=0.5 (20fps ?)
 
 
 
-
-# this py program is where the client resides, essentially, so instantiate a client
+# client init
 client = airsim.CarClient()
-
-# try to connect to the server (which should already be running)
 client.confirmConnection()
-
-# not sure if ^ will wait for a connection even if connection fails, but 
-# i guess that this next function will connect to tell the server 
-# that this program wants to communicate through the API
 client.enableApiControl(True)
 
-# this comes from the client, it's just a structure w/ 
-# attributes: brake (true or false), throttle (true or false),
-# and steering angle
+# car controls struct init
 car_controls = airsim.CarControls()
 
-# IRL, can't really get this info, but for the purposes of this 
-# basic interaction, getting this information is OK.
-# see car_collision.py for more (in ..\PythonClient\car)
-# NOTE: functions that begin w/ 'sim' are not available IRL 
+# collision info struct init
 collision_info = client.simGetCollisionInfo() 
-# collision_info is also a structure w/ attributes: position, normal, 
-# impact_point, penetration_depth, object_name, object_id, has_collieded
 
+y = np.array(NUM_IMAGES_TO_REMEMBER, 1)
+while True:
+        sim_img_response = client.simGetImages([airsim.ImageRequest(0, airsim.ImageType.DepthVis),
+                                                airsim.ImageRequest(1, airsim.ImageType.DepthPlanner, True)])
+        
 
-# run until this program is canceled 
-collisions_in_a_row = 0
-while True: 
-
-    # based on: https://github.com/Microsoft/AirSim/blob/master/docs/apis.md
-	# get the state of the car: current speed, current gear, and the 6 kinematic
-	# quants: position, orientation, linear velocity, angular velocity,
-	# linear acceleration, angular acceleration
-	car_state = client.getCarState()  # the program asks the client object to
-	# ask the server to get the car state? 
-
-
-	# want to know if collided or not so know whether to reverse or not
+        # here, I should probably error check to make sure that the simulation response is valid,
+        # but I don't know what error to check for.
+        
+        
+        
+        car_state = client.getCarState()
 	collision_info = client.simGetCollisionInfo()
 
 	if collisions_in_a_row > 5:
