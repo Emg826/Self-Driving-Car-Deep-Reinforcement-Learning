@@ -109,8 +109,8 @@ def fallen_into_oblivion(gt_kinematics):
   """
   # not sure why, but -z is up and +z is down?
   print('x={}, y={}, z={}'.format(gt_kinematics['position']['x_val'],
-                                  gt_kinematics['position']['y_val'],
-                                  gt_kinematics['position']['z_val']))
+                                            gt_kinematics['position']['y_val'],
+                                            gt_kinematics['position']['z_val']))
 
   # if fallen through the map floor
   if gt_kinematics['position']['z_val'] > 0.1:
@@ -147,6 +147,8 @@ time_step = 0
 last_reset_time = time.time()
 last_train_time = time.time()
 
+collisions_in_a_row = 0
+
 while True:
   print('Round {}'.format(time_step+1))
   # request an image of the scene from the front facing camera
@@ -164,6 +166,21 @@ while True:
   recent_collisions[most_recent_collision_idx] = collision_info.has_collided
   most_recent_collision_idx = (most_recent_collision_idx + 1) % NUM_IMAGES_TO_REMEMBER
 
+
+  # if there are too many collisions, the car can glitch through the
+  # map and crash the Unreal engine; this should help avoid that
+  # without affecting the training process too much
+  if collision_info.has_collided:
+    if collisions_in_a_row > 9:
+      client.reset()
+      collisions_in_a_row = 0
+      last_reset_time = time.time()  # mark now as beginning of next episode
+    else:
+      collisions_in_a_row += 1
+  else:
+    collisions_in_a_row = 0
+
+
   # check if need to retrain or train for 1st time
   if (time.time() - last_train_time) > SEC_BETWEEN_RETRAINS or time_step == 0:
     client.simPause(True)
@@ -172,7 +189,7 @@ while True:
     last_train_time = time.time()
 
   car_controls = driver.get_next_instructions(sim_img,
-                                              car_controls)
+                                                            car_controls)
 
   client.setCarControls(car_controls)
 
@@ -186,20 +203,11 @@ while True:
     client.simPause(False)
     last_reset_time = time.time()  # mark now as beginning of next episode
 
-
-  # if fallen through the map
+  # if car has fallen through the map
   if fallen_into_oblivion(client.simGetGroundTruthKinematics()):
     client.simPause(True)
-
-    # get a new client/connection to the sim
-    airsim.CarClient()
-    client.confirmConnection()
-    client.enableApiControl(True)
-
-  
     client.reset()
-
-    # start back up
     client.simPause(False)
+    last_reset_time = time.time()  # mark now as beginning of next episode
 
   # END while
