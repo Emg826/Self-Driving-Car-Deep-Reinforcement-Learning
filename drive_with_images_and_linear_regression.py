@@ -1,17 +1,19 @@
 """
+Note: does not use linear regression.
+
 This file runs a client that get images from the simulation, reads them
-into this program, and feeds them into a two linear regressors: one for
-the throttle and one for the steering angle.
+into this program, and feeds them through an incremental PCA and then
+into a stochastic gradient descent classifier.
 
 The purpose of this file is to learn how to get and use images from the
-simulation and learn how to batch learn (which is necessary given that the
-data is a continuous stream).
+simulation and then batch learn on those images (which is necessary given that the
+data is a continuous stream). This involves pausing before starting and after finishing
+training.
 
 based on: https://github.com/Microsoft/AirSim/blob/master/docs/image_apis.md
-idea for driver based on: https://github.com/simondlevy/AirSimTensorFlow
+idea for collision-avoiding driver: https://github.com/simondlevy/AirSimTensorFlow
 very helpful: https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/types.py
-"""
-"""
+
 ImageType values in airsim.ImageRequest(). These are mostly computer vision
 terms, so it helps to Google image search and see what such images look like.
 
@@ -32,12 +34,14 @@ import time
 from sklearn.decomposition import IncrementalPCA # normalize then dimensionality reduction
 from sklearn.linear_model import SGDClassifier # classify collision
 
-SEC_BETWEEN_RESETS = 35  # reset every n seconds for simplicity
-SEC_BETWEEN_RETRAINS = 9 # retrain every n seconds
-SEC_BETWEEN_IMG_REQUESTS = 0.01 # 0.05 means record 20 times per second
-NUM_IMAGES_TO_REMEMBER = 100  #2e10 means remember the past 51.2 seconds @ record interval=0.5 (20fps ?) number of images before retraining
-NUM_IMAGES_BETWEEN_RETRAINS = 40   # 2e6 means retrain every 12.8 seconds @ record interval=0.5 (20fps ?)
+
+# some important constants...
+SEC_BETWEEN_RESETS = 50  # reset every n seconds for simplicity
+SEC_BETWEEN_RETRAINS = 7 # retrain every n seconds
+SEC_BETWEEN_IMG_REQUESTS = 0.2 # 0.05 means record 20 times per second
+NUM_IMAGES_TO_REMEMBER = 75 # should be > SEC_BETWEEN_RETRAINS * (1 / SEC_BETWEEN_IMG_REQUESTS)
 NUM_IMAGES_UNTIL_FEEDBACK = 3 # num images until get + or - feedback
+
 PIXELS_IN_IMG = 36864   # number of pixels in the image
 
 class CollisionAvoiderDriver():
@@ -52,9 +56,12 @@ class CollisionAvoiderDriver():
   drive straight, full steam ahead.
   """
   def __init__(self):
-    #self.incremental_pca = IncrementalPCA(n_components=1000)
+    self.incremental_pca = IncrementalPCA(n_components=NUM_IMAGES_TO_REMEMBER)
     self.collision_classifier = SGDClassifier(max_iter=250,
-                                              warm_start=True)
+                                              warm_start=True,
+                                              alpha=0.5,
+                                              loss='perceptron',
+                                              shuffle=False)
 
   def train(self, X, y):
     """
@@ -64,10 +71,10 @@ class CollisionAvoiderDriver():
     :param y: array of collisions -- (num images, 1)
     """
     print("Training!")
-    #self.incremental_pca = self.incremental_pca.partial_fit(X)
-    #X_pca = self.incremental_pca.transform(X)
+    self.incremental_pca = self.incremental_pca.partial_fit(X)
+    X_pca = self.incremental_pca.transform(X)
       
-    self.collision_classifier = self.collision_classifier.partial_fit(X,
+    self.collision_classifier = self.collision_classifier.partial_fit(X_pca,
                                                                       y,
                                                                       classes=[0, 1])  # collision=1
 
@@ -80,28 +87,37 @@ class CollisionAvoiderDriver():
 
     :returns: airsim.CarControls object with instructions for next time step
     """
-    #X_pca = self.incremental_pca.transform(X.reshape(1, -1))
-    collision_imminent = self.collision_classifier.predict(X.reshape(1,-1))
+    X_pca = self.incremental_pca.transform(X.reshape(1, -1))
+    collision_imminent = self.collision_classifier.predict(X_pca)
 
     if collision_imminent:
       car_controls.throttle = -1.0
       car_controls.steering = 1.0
       car_controls.handbrake = True
     else:
-      car_controls.throttle = 0.5
+      car_controls.throttle = 1.0
       car_controls.steering = 0.0
       car_controls.handbrake = False
 
     return car_controls
 
-def reset_if_fallen_into_oblivion(gt_kinematics, client):
+def fallen_into_oblivion(gt_kinematics):
   """
   Noticed a problem that the car will sometimes glitch through
   the ground of the map and cause the server to crash. To avoid
   crashses, try to reset once this happens.
   """
-  if gt_kinematics['position']['y_val'] < -1.0:
-    client.reset()
+  # not sure why, but -z is up and +z is down?
+  print('x={}, y={}, z={}'.format(gt_kinematics['position']['x_val'],
+                                  gt_kinematics['position']['y_val'],
+                                  gt_kinematics['position']['z_val']))
+
+  # if fallen through the map floor
+  if gt_kinematics['position']['z_val'] > 0.1:
+    return True
+  else:
+    return False
+
 
 # car controller init
 driver = CollisionAvoiderDriver()
@@ -135,7 +151,7 @@ while True:
   print('Round {}'.format(time_step+1))
   # request an image of the scene from the front facing camera
   sim_img_response = client.simGetImages([airsim.ImageRequest(camera_name='0',
-                                                              image_type=airsim.ImageType.Scene,
+                                                              image_type=airsim.ImageType.DepthPlanner,
                                                               pixels_as_float=True,
                                                               compress=False)])
   # extract 1D version of image from response obj
@@ -150,7 +166,9 @@ while True:
 
   # check if need to retrain or train for 1st time
   if (time.time() - last_train_time) > SEC_BETWEEN_RETRAINS or time_step == 0:
+    client.simPause(True)
     driver.train(recent_images, recent_collisions)
+    client.simPause(False)
     last_train_time = time.time()
 
   car_controls = driver.get_next_instructions(sim_img,
@@ -163,12 +181,25 @@ while True:
 
   # if this epoch/episode is over
   if (time.time() - last_reset_time) > SEC_BETWEEN_RESETS:
+    client.simPause(True)
     client.reset()  # restart car position
-    time.sleep(1)  # wait for reset to complete
+    client.simPause(False)
     last_reset_time = time.time()  # mark now as beginning of next episode
 
 
-  reset_if_fallen_into_oblivion(client.simGetGroundTruthKinematics(),
-                                client)
+  # if fallen through the map
+  if fallen_into_oblivion(client.simGetGroundTruthKinematics()):
+    client.simPause(True)
+
+    # get a new client/connection to the sim
+    airsim.CarClient()
+    client.confirmConnection()
+    client.enableApiControl(True)
+
+  
+    client.reset()
+
+    # start back up
+    client.simPause(False)
 
   # END while
