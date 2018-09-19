@@ -112,8 +112,13 @@ def fallen_into_oblivion(gt_kinematics):
                                             gt_kinematics['position']['y_val'],
                                             gt_kinematics['position']['z_val']))
 
-  # if fallen through the map floor
-  if gt_kinematics['position']['z_val'] > 0.1:
+  # if fallen through the map floor; normal z coord is -0.65 to -0.8, so
+  # -0.5 catches a fall into oblivion before it get out of hand.
+  # now get over 700 rounds (probably more, but i didn't want to sit
+  # around forever) of instruction giving; previously maybe half
+  # that before oblivion fall (when did z > 0.1, which, then it was too late
+  # to catch).
+  if gt_kinematics['position']['z_val'] > -0.5:
     return True
   else:
     return False
