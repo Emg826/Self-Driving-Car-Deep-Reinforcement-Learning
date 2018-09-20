@@ -23,8 +23,8 @@ tracks collisions) and how to keep it as realistic as possible.
 """
 
 
-## COPY THIS INTO YOUR SETTING.JSON FILE FOR THE SIMULATION
-# (in your documents folder)
+## COPY THIS INSIDE THE OUTER MOST {} OF THE SETTING.JSON FILE FOR THE SIM
+# (in your Documents/AirSim folder if you're on windows)
 
 """
   "Vehicles": {
@@ -83,28 +83,45 @@ client.enableApiControl(True)
 # car controls struct init
 car_controls = airsim.CarControls()
 
-# collision info struct init --
+# collision info struct init
 collision_info = client.simGetCollisionInfo()
 
-# simulation/client event loop
+#
+#
+# <deep reinforcment learning algorithm here>
+#
+#
+
 time_step = 0
 
+# simulation/client event loop
 while True:
   print('Round {}'.format(time_step+1))
   # request an image of the scene from the front facing camera
-  sim_img_response = client.simGetImages([airsim.ImageRequest(camera_name='left',
-                                                              image_type=airsim.ImageType.Scene,
-                                                              pixels_as_float=True,
-                                                              compress=False),
-                                          airsim.ImageRequest(camera_name='front',
-                                                              image_type=airsim.ImageType.Scene,
-                                                              pixels_as_float=True,
-                                                              compress=False),
-                                          airsim.ImageRequest(camera_name='right',
-                                                              image_type=airsim.ImageType.Scene,
-                                                              pixels_as_float=True,
-                                                              compress=False),
-                                          airsim.ImageRequest(camera_name='right',
-                                                              image_type=airsim.ImageType.Scene,
-                                                              pixels_as_float=True,
-                                                              compress=False)])
+  sim_img_responses = client.simGetImages([airsim.ImageRequest(camera_name='left',
+                                                               image_type=airsim.ImageType.Scene,
+                                                               pixels_as_float=True,
+                                                               compress=False),
+                                           airsim.ImageRequest(camera_name='front',
+                                                               image_type=airsim.ImageType.Scene,
+                                                               pixels_as_float=True,
+                                                               compress=False),
+                                           airsim.ImageRequest(camera_name='right',
+                                                               image_type=airsim.ImageType.Scene,
+                                                               pixels_as_float=True,
+                                                               compress=False),
+                                           airsim.ImageRequest(camera_name='rear',
+                                                               image_type=airsim.ImageType.Scene,
+                                                               pixels_as_float=True,
+                                                               compress=False)])
+
+    left_img = sim_img_responses['left'].image_data_float
+    front_img = sim_img_responses['front'].image_data_float
+    right_img = sim_img_responses['right'].image_data_float
+    rear_img = sim_img_responses['rear'].image_data_float
+
+    # assume i have all 4 images. Now what? do i concatenate the images?
+    # maybe do this: https://keras.io/layers/merge/#concatenate
+
+    # when ^ is figured out, look @ https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
+    # for an example of how to use keras-rl
