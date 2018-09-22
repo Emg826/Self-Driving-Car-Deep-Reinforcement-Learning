@@ -20,6 +20,11 @@ The hope is that this will help to create a reward function and deep network
 that could be taken outside the simulation and continue learning. Therefore,
 I have to figure out how to take advantage of the simulation (e.g., it
 tracks collisions) and how to keep it as realistic as possible.
+
+
+helpful: https://github.com/Microsoft/AirSim/blob/master/docs/image_apis.md/#available-cameras
+https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/types.py
+https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/client.py
 """
 
 
