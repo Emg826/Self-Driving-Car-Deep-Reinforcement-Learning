@@ -1,5 +1,8 @@
 
-## Using Deep Learning to Drive a Simulated Car in a Simulated Environment
+# Using Deep Reinforcement Learning to Drive a Simulated Car in a Simulated Environment
+
+
+![Panoramia view the car sees](https://github.com/Emg826/Reinforcement-Learning-Project/blob/DRL_steering_control/imgs/sample_panorama.png)
 
 This is the repository for my senior independent study at the College of Wooster. The topic for my senior I.S. is using a deep double Q network to develop an end-to-end autonomous vehicle system. This deep double Q network will do its learning in Microsoft's AirSim simulator. Aside from this simulator being open source and free, one of the main reasons it was chosen (over, say, the Udacity self-driving car simulator) was that this simulator offers diverse environments (urban and rural) with very dynamic elements (other cars, pedestrians, variable weather and lightling conditions, etc.). 
 
