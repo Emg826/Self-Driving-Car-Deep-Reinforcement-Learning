@@ -22,196 +22,235 @@ I have to figure out how to take advantage of the simulation (e.g., it
 tracks collisions) and how to keep it as realistic as possible.
 
 
-helpful: https://github.com/Microsoft/AirSim/blob/master/docs/image_apis.md/#available-cameras
+helpful for cams: https://github.com/Microsoft/AirSim/blob/master/docs/image_apis.md/#available-cameras
 https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/types.py
 https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/client.py
-"""
 
+helpful for DRL: https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
+"""
 
 import airsim
 import numpy as np
 import time
 import os
 
+from keras.models import Sequential
+from keras.layers import Convolution2D, Activation, Flatten, Dense
+from keras.optimizers import Adam # usually is pretty fast
+
+from rl.agents.dqn import DQNAgent
+from rl.policy import LinearAnnealingPolicy, EpsGreedyQPolicy
+from rl.memory import SequentialMemory
+from rl.core import Processor, Env
+from rl.callbacks import FileLogger, ModelIntervalCheckpoint
 
 
-LEFT_CAM_NAME = '2' 
-RIGHT_CAM_NAME = '1' 
-FORWARD_CAM_NAME = '0'
-BACKWARD_CAM_NAME = '4'
-
-
-def get_composite_sim_image(client):
+class AirSimClientEnv(Env):
   """
-  Get snapshots from the left, forward, right, and rear cameras in 1 2D numpy array
-  
-  :param:client: airsim.CarClient() object that has already connected
-  to the simulation
-
-  :returns: 2D numpy array that is a composite of all 4 images. 
-
-  a little help from: https://github.com/Microsoft/AirSim/blob/master/docs/image_apis.md/#Available%20Cameras
+  Child class of the abstract base class called 'Env'. Same as the
+  OpenAI Gym environment object (https://gym.openai.com/docs/#environments).
+  This is the virtual representation of the environment with which
+  the agent will interact. All keras-rl agent objects take an
+  environment as a parameter.
   """
-
-  # puts these in the order in which the images thereof should be concatenated (left to r)
-  cam_names = [LEFT_CAM_NAME, FORWARD_CAM_NAME, RIGHT_CAM_NAME, BACKWARD_CAM_NAME]
-
-  # make the request for a snapshot from all 4 cameras (except the first person camera)
-  sim_img_responses = request_all_4_sim_images(client, cam_names)
-  
-  return make_composite_image_from_responses(sim_img_responses, cam_names)
-
-
-def request_all_4_sim_images(client, cam_names):
-  """
-  Make a request to the simulation from the client for a snapshot from each of
-  the 4 cameras.
-
-  :param client: airsim.CarClient() object that has already connected to the simulation
-  :param cam_names: list of camera names, order of list is order in which requests will
-  be made and (presumably) returned
-  
-  :returns: list where each element is an airsim.ImageResponse() obj
-  """
-  # build list of airsim.ImageRequest objects to give to client.simGetImages()
-  list_of_img_request_objs = []
-  for cam_name in cam_names:
-    list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
-                                                               image_type=airsim.ImageType.Scene,
-                                                               pixels_as_float=False,
-                                                               compress=False) )
-
-  return client.simGetImages(list_of_img_request_objs)
-
-
-def make_composite_image_from_responses(sim_img_responses, cam_names):
-  """
-  Take the lists responses, each with uncompressed 1D RGBA binary string
-  representations of images, convert the image to a 2D-4 channel numpy array,
-  and then concatenate all of the images into a composite image.
-
-  :param sim_img_responses: dictionary of the responses from a call to
-  request_all_4_sim_images()
-  :param cam_names: names of the cameras from which the image request objs
-  were gotten; order of this names in cam_names is ASSUMED to be the same
-  order in sim_img_responses
-  
-  :returns: 2D, 4 channel numpy array of all images "stitched" together as:
-  left forward right back  (NOTE: not sure where to put back img).
-
-  Example numpy array: [ [(100, 125, 150, 1) , (255, 100, 255, 1)],
-                         [(255, 255, 255, 1) , (255, 255, 0, 1)] ]
-  """
-  # extract the 1D  RGBA binary uint8 string images into 2D,
-  # 4 channel images; append that image to a list
-
-  # order of these names is order images will be concatenated
-  # together (from left to right)
-  
-  dict_of_2D_imgs = {}
-
-  for cam_name, sim_img_response in zip(cam_names, sim_img_responses):
-    # get a flat, 1D array of the iamge
-    img_1D = np.fromstring(sim_img_response.image_data_uint8, dtype=np.uint8)
-
-    # reshape that into a 2D array then flip upside down
-    # (because orignal image is flipped)
-    #img_2D_RGBA = np.flipud(img_1D.reshape(sim_img_response.height,
-    #                                       sim_img_response.width,
-    #                                       4))
-
-    # CNN is spatial invariant, meaning it doesn't care if the image is
-    # flipped or not, so no need to unflip it
-    height = sim_img_response.height
-    width = sim_img_response.width
-    img_2D_RGBA = img_1D.reshape(height,
-                                 width,
-                                 4)
-
+  def __init__(self):
+    self.client = airsim.CarClient()
+    client.confirmConnection()
+    client.enableApiControl(True)
     
-    dict_of_2D_imgs.update({ cam_name : img_2D_RGBA})
+    self.reward_range = (-np.inf, np.inf)
+    self.action_space = None
+    self.observation_space = None
+
+    self.left_cam_name = '2'
+    self.right_cam_name = '1'
+    self.forward_cam_name = '0'
+    self.backward_cam_name = '4'
+    self.setup_my_cameras(self.client)
+
+
+  def step(self, action):
+    """
+    Run 1 timestep of the simulation given some action.
+
+    :param action: action provided by the env???
+
+    :returns:
+      -- observations: Agent's observation of current env, so the list of
+      img responses
+      -- reward: reward from previous action
+      -- done (boolean): true if episode ended; false otherwise
+      -- info: dict of with debugging info
+    """
+    observation = self.get_composite_sim_image()
+
+    # can sub in a better reward function later
+    collision_info = self.client.simGetCollisionInfo()
+    if collision_info.has_collided is True:
+      reward = -1
+    else:
+      reward = 1
+
+    done = False
+    info = {'collision_info' : collision_info}
     
-  # now with all images in 2D, 4 channel form, stitch them together
-  # NOTE THESE ARRAY INDEXINGS ARE ASSUMING LEFT-FWD-RIGHT-BACK ordering
-  # row, column indexing in []'s
-  # int((2*width/5)):: is the right 60% of img; 0 is left 2 is right 3 is rear
-  composite_img = np.concatenate([ dict_of_2D_imgs[cam_names[3]][:, int((2*width/5))::],
-                                   dict_of_2D_imgs[cam_names[0]][:,int((2*width/5))::],
-                                   dict_of_2D_imgs[cam_names[1]],
-                                   dict_of_2D_imgs[cam_names[2]][:,0:int((3*width/5))],
-                                   dict_of_2D_imgs[cam_names[3]][:,0:int((3*width/5))] ], axis=1)
+    return observation, reward, done, info
+    
+  def reset(self):
+    """
+    When need to reset the environment, do this.
+    """
+    self.client.reset()
+    
+  def render(self):
+    pass # n/a for AirSim -- all contained in step()
 
-  # for debugging
-  airsim.write_png(os.path.normpath('imgs/sim_img'+ str(time.time())+'.png'), composite_img)
+  def close(self):
+    pass # garbage collection if need any
 
-  return composite_img    
+  def setup_my_cameras(self, client):
+    """
+    Helper function to set the left, right, forward, and back cameras up
+    on the vehicle as I've see fit.
+
+    :param client: airsim.CarClient() object that
+    already connected to the sim
+    
+    :returns: nada
+    """
+    # pitch, roll, yaw ; each is in radians where
+    # 15 degrees = 0.261799 (don't ask me why they used radians...)
+    # 10 degrees = 0.174533, 60 degrees = 1.0472, and 180 degrees = 3.14159
+    # reason for +- 0.70: forward camera FOV is 90 degrees or 1.57 radians;
+    # 0.7 is roughly half that and seem to work well, so I'm sticking with it
+    # NOTE: these images are reflected over a vertical line: left in the image
+    # is actually right in the simulation...should be ok for CNN since it is
+    # spatially invariant, but if not, then come back and change these
+    self.client.simSetCameraOrientation(self.left_cam_name,
+                                        airsim.Vector3r(0.0, 0.0, -0.68))
+    self.client.simSetCameraOrientation(self.right_cam_name,
+                                   airsim.Vector3r(0.0, 0.0, 0.68))
+    self.client.simSetCameraOrientation(self.forward_cam_name,
+                                        airsim.Vector3r(0.0, 0.0, 0.0))
+    self.client.simSetCameraOrientation(self.backward_cam_name,
+                                        airsim.Vector3r(0.0, 0.0, 11.5))
+    # tbh: i have no idea why 11.5 works (3.14 should've been ok, but wasn't)
 
 
-def setup_my_cameras(client):
-  """
-  Set the left, right, forward, and back cameras up
-  on the vehicle as I see fit.
+  def get_composite_sim_image(self):
+    """
+    Get snapshots from the left, forward, right, and rear cameras in 1 2D numpy array
+    
+    :param:client: airsim.CarClient() object that has already connected
+    to the simulation
 
-  :param client: airsim.CarClient() object that
-  already connected to the sim
-  
-  :returns: nada
-  """
-  # quaternion is: pitch, roll, yaw ; each is in radians where
-  # 15 degrees = 0.261799 (don't ask me why they used radians...)
-  # 10 degrees = 0.174533, 60 degrees = 1.0472, and 180 degrees = 3.14159
-  # reason for +- 0.70: forward camera FOV is 90 degrees or 1.57 radians;
-  # 0.7 is roughly half that and seem to work well, so I'm sticking with it
-  # NOTE: these images are reflected over a vertical line: left in the image
-  # is actually right in the simulation...should be ok for CNN since it is
-  # spatially invariant, but if not, then come back and change these
-  client.simSetCameraOrientation(LEFT_CAM_NAME,
-                                 airsim.Vector3r(0.0, 0.0, -0.68))
-  client.simSetCameraOrientation(RIGHT_CAM_NAME,
-                                 airsim.Vector3r(0.0, 0.0, 0.68))
-  client.simSetCameraOrientation(FORWARD_CAM_NAME,
-                                 airsim.Vector3r(0.0, 0.0, 0.0))
-  client.simSetCameraOrientation(BACKWARD_CAM_NAME,
-                                 airsim.Vector3r(0.0, 0.0, 11.5))
-  # tbh: i have no idea why 11.5 works (3.14 should've been ok, but wasn't)
+    :returns: 2D numpy array that is a composite of all 4 images. 
+
+    a little help from: https://github.com/Microsoft/AirSim/blob/master/docs/image_apis.md/#Available%20Cameras
+    """
+
+    # puts these in the order should be concatenated (left to r)
+    cam_names = [self.left_cam_name,
+                 self.forward_cam_name,
+                 self.right_cam_name,
+                 self.backward_cam_name]
+
+    # make the request for a snapshot from all 4 cameras (except the first person camera)
+    sim_img_responses = request_all_4_sim_images(client, cam_names)
+    
+    return make_composite_image_from_responses(sim_img_responses, cam_names)
+
+
+  def request_all_4_sim_images(self, cam_names):
+    """
+    Helper to get_composite_sim_image. Make a request to the simulation from the
+    client for a snapshot from each of the 4 cameras.
+
+    :param client: airsim.CarClient() object that has already connected to the simulation
+    :param cam_names: list of camera names, order of list is order in which requests will
+    be made and (presumably) returned
+    
+    :returns: list where each element is an airsim.ImageResponse() obj
+    """
+    # build list of airsim.ImageRequest objects to give to client.simGetImages()
+    list_of_img_request_objs = []
+    for cam_name in cam_names:
+      list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
+                                                           image_type=airsim.ImageType.Scene,
+                                                           pixels_as_float=False,
+                                                           compress=False) )
+
+    return self.client.simGetImages(list_of_img_request_objs)
+
+
+  def make_composite_image_from_responses(self, sim_img_responses, cam_names):
+    """
+    Helper to get_composite_sim_image. Take the lists responses, each with
+    uncompressed 1D RGBA binary string representations of images, convert
+    the image to a 2D-4 channel numpy array, and then concatenate all of
+    the images into a composite (panoramic-ish) image.
+
+    :param sim_img_responses: dictionary of the responses from a call to
+    request_all_4_sim_images()
+    :param cam_names: names of the cameras from which the image request objs
+    were gotten; order of this names in cam_names is ASSUMED to be the same
+    order in sim_img_responses
+    
+    :returns: 2D, 4 channel numpy array of all images "stitched" together as:
+    left forward right back  (NOTE: not sure where to put back img).
+
+    Example numpy array: [ [(100, 125, 150, 1) , (255, 100, 255, 1)],
+                           [(255, 255, 255, 1) , (255, 255, 0, 1)] ]
+    """
+    # extract the 1D  RGBA binary uint8 string images into 2D,
+    # 4 channel images; append that image to a list
+
+    # order of these names is order images will be concatenated
+    # together (from left to right)
+    
+    dict_of_2D_imgs = {}
+
+    height = sim_img_responses[0].height
+    width = sim_img_responses[0].width
+    
+    for cam_name, sim_img_response in zip(cam_names, sim_img_responses):
+      # get a flat, 1D array of the iamge
+      img_1D = np.fromstring(sim_img_response.image_data_uint8, dtype=np.uint8)
+
+      # reshape that into a 2D array then flip upside down
+      # (because orignal image is flipped)
+      #img_2D_RGBA = np.flipud(img_1D.reshape(sim_img_response.height,
+      #                                       sim_img_response.width,
+      #                                       4))
+
+      # But! CNN is spatial invariant, meaning it doesn't care if the
+      # image is flipped or not, so no need to unflip it
+      img_2D_RGBA = img_1D.reshape(height, width, 4)
+
+      
+      dict_of_2D_imgs.update({ cam_name : img_2D_RGBA})
+      
+    # now with all images in 2D, 4 channel form, stitch them together
+    # NOTE THESE ARRAY INDEXINGS ARE ASSUMING LEFT-FWD-RIGHT-BACK ordering
+    # row, column indexing in []'s
+    # int((2*width/5)):: is the right 60% of img; 0 is left 2 is right 3 is rear
+    composite_img = np.concatenate([ dict_of_2D_imgs[cam_names[3]][:, int((2*width/5))::],
+                                     dict_of_2D_imgs[cam_names[0]][:,int((2*width/5))::],
+                                     dict_of_2D_imgs[cam_names[1]],
+                                     dict_of_2D_imgs[cam_names[2]][:,0:int((3*width/5))],
+                                     dict_of_2D_imgs[cam_names[3]][:,0:int((3*width/5))] ], axis=1)
+
+    # for debugging and getting cameras right
+    #airsim.write_png(os.path.normpath('imgs/sim_img'+ str(time.time())+'.png'), composite_img)
+
+    return composite_img    
+
+
   
                                  
 
+    
 
-# client init
-client = airsim.CarClient()
-client.confirmConnection()
-client.enableApiControl(True)
-
-setup_my_cameras(client)
-
-# car controls struct init
-car_controls = airsim.CarControls()
-
-# collision info struct init
-collision_info = client.simGetCollisionInfo()
-
-#
-#
-# <deep reinforcment learning algorithm here>
-#
-#
-
-time_step = 0
-
-# simulation/client event loop
-while True:
-  print('Round {}'.format(time_step+1))
-  composite_img = get_composite_sim_image(client)
-  print(composite_img.shape)
-  time.sleep(2)
-
-  time_step += 1
-  # request an image of the scene from the front facing camera
-
-
-    # assume i have all 4 images. Now what? do i concatenate the images?
-    # maybe do this: https://keras.io/layers/merge/#concatenate
-
-    # when ^ is figured out, look @ https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
-    # for an example of how to use keras-rl
+# how is an env different from a processor?
+# if i had to guess, i'd say that the env passes stuff off to the
+# processor
