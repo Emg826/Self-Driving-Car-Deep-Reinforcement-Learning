@@ -122,21 +122,27 @@ def make_composite_image_from_responses(sim_img_responses, cam_names):
 
     # CNN is spatial invariant, meaning it doesn't care if the image is
     # flipped or not, so no need to unflip it
-    img_2D_RGBA = img_1D.reshape(sim_img_response.height,
-                                 sim_img_response.width,
+    height = sim_img_response.height
+    width = sim_img_response.width
+    img_2D_RGBA = img_1D.reshape(height,
+                                 width,
                                  4)
 
     
     dict_of_2D_imgs.update({ cam_name : img_2D_RGBA})
     
   # now with all images in 2D, 4 channel form, stitch them together
-  composite_img = np.concatenate([ dict_of_2D_imgs[cam_names[0]],
+  # NOTE THESE ARRAY INDEXINGS ARE ASSUMING LEFT-FWD-RIGHT-BACK ordering
+  # row, column indexing in []'s
+  # int((2*width/5)):: is the right 60% of img; 0 is left 2 is right 3 is rear
+  composite_img = np.concatenate([ dict_of_2D_imgs[cam_names[3]][:, int((2*width/5))::],
+                                   dict_of_2D_imgs[cam_names[0]][:,int((2*width/5))::],
                                    dict_of_2D_imgs[cam_names[1]],
-                                   dict_of_2D_imgs[cam_names[2]],
-                                   dict_of_2D_imgs[cam_names[3]] ], axis=1)
+                                   dict_of_2D_imgs[cam_names[2]][:,0:int((3*width/5))],
+                                   dict_of_2D_imgs[cam_names[3]][:,0:int((3*width/5))] ], axis=1)
 
   # for debugging
-  #airsim.write_png(os.path.normpath('sim_img'+ str(time.time())+'.png'), composite_img)
+  airsim.write_png(os.path.normpath('imgs/sim_img'+ str(time.time())+'.png'), composite_img)
 
   return composite_img    
 
@@ -160,15 +166,14 @@ def setup_my_cameras(client):
   # is actually right in the simulation...should be ok for CNN since it is
   # spatially invariant, but if not, then come back and change these
   client.simSetCameraOrientation(LEFT_CAM_NAME,
-                                 airsim.Vector3r(0.0, 0.0, -0.70))
+                                 airsim.Vector3r(0.0, 0.0, -0.68))
   client.simSetCameraOrientation(RIGHT_CAM_NAME,
-                                 airsim.Vector3r(0.0, 0.0, 0.70))
+                                 airsim.Vector3r(0.0, 0.0, 0.68))
   client.simSetCameraOrientation(FORWARD_CAM_NAME,
                                  airsim.Vector3r(0.0, 0.0, 0.0))
   client.simSetCameraOrientation(BACKWARD_CAM_NAME,
-                                 airsim.Vector3r(0.0, 0.0, 3.2))
-  
-  
+                                 airsim.Vector3r(0.0, 0.0, 11.5))
+  # tbh: i have no idea why 11.5 works (3.14 should've been ok, but wasn't)
   
                                  
 
