@@ -28,6 +28,14 @@ import numpy as np
 import time
 import os
 
+
+
+LEFT_CAM_NAME = '2' 
+RIGHT_CAM_NAME = '1' 
+FORWARD_CAM_NAME = '0'
+BACKWARD_CAM_NAME = '4'
+
+
 def get_composite_sim_image(client):
   """
   Get snapshots from the left, forward, right, and rear cameras in 1 2D numpy array
@@ -41,7 +49,7 @@ def get_composite_sim_image(client):
   """
 
   # puts these in the order in which the images thereof should be concatenated (left to r)
-  cam_names = ['front_left', 'front_center', 'front_right', 'back_center']
+  cam_names = [LEFT_CAM_NAME, FORWARD_CAM_NAME, RIGHT_CAM_NAME, BACKWARD_CAM_NAME]
 
   # make the request for a snapshot from all 4 cameras (except the first person camera)
   sim_img_responses = request_all_4_sim_images(client, cam_names)
@@ -103,14 +111,19 @@ def make_composite_image_from_responses(sim_img_responses, cam_names):
 
     # reshape that into a 2D array then flip upside down
     # (because orignal image is flipped)
-    img_2D_RGBA = np.flipud(img_1D.reshape(sim_img_response.height,
-                                           sim_img_response.width,
-                                           4))
+    #img_2D_RGBA = np.flipud(img_1D.reshape(sim_img_response.height,
+    #                                       sim_img_response.width,
+    #                                       4))
+
+    # CNN is spatial invariant, meaning it doesn't care if the image is
+    # flipped or not, so no need to unflip it
+    img_2D_RGBA = img_1D.reshape(sim_img_response.height,
+                                 sim_img_response.width,
+                                 4)
 
     
     dict_of_2D_imgs.update({ cam_name : img_2D_RGBA})
     
-  print(len(sim_img_responses))
   # now with all images in 2D, 4 channel form, stitch them together
   composite_img = np.concatenate([ dict_of_2D_imgs[cam_names[0]],
                                    dict_of_2D_imgs[cam_names[1]],
@@ -118,16 +131,49 @@ def make_composite_image_from_responses(sim_img_responses, cam_names):
                                    dict_of_2D_imgs[cam_names[3]] ], axis=1)
 
   # for debugging
-  airsim.write_png(os.path.normpath('sim_img'+ str(time.time())+'.png'), composite_img)
+  #airsim.write_png(os.path.normpath('sim_img'+ str(time.time())+'.png'), composite_img)
 
   return composite_img    
-    
+
+
+def setup_my_cameras(client):
+  """
+  Set the left, right, forward, and back cameras up
+  on the vehicle as I see fit.
+
+  :param client: airsim.CarClient() object that
+  already connected to the sim
+  
+  :returns: nada
+  """
+  # quaternion is: pitch, roll, yaw ; each is in radians where
+  # 15 degrees = 0.261799 (don't ask me why they used radians...)
+  # 10 degrees = 0.174533, 60 degrees = 1.0472, and 180 degrees = 3.14159
+  # reason for +- 0.70: forward camera FOV is 90 degrees or 1.57 radians;
+  # 0.7 is roughly half that and seem to work well, so I'm sticking with it
+  # NOTE: these images are reflected over a vertical line: left in the image
+  # is actually right in the simulation...should be ok for CNN since it is
+  # spatially invariant, but if not, then come back and change these
+  client.simSetCameraOrientation(LEFT_CAM_NAME,
+                                 airsim.Vector3r(0.0, 0.0, -0.70))
+  client.simSetCameraOrientation(RIGHT_CAM_NAME,
+                                 airsim.Vector3r(0.0, 0.0, 0.70))
+  client.simSetCameraOrientation(FORWARD_CAM_NAME,
+                                 airsim.Vector3r(0.0, 0.0, 0.0))
+  client.simSetCameraOrientation(BACKWARD_CAM_NAME,
+                                 airsim.Vector3r(0.0, 0.0, 3.2))
+  
+  
+  
+                                 
 
 
 # client init
 client = airsim.CarClient()
 client.confirmConnection()
 client.enableApiControl(True)
+
+setup_my_cameras(client)
 
 # car controls struct init
 car_controls = airsim.CarControls()
