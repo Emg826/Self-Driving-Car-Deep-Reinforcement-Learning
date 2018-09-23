@@ -28,14 +28,30 @@ https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/client.py
 
 helpful for DRL: https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
 """
-
 import airsim
 import numpy as np
 import time
 import os
 
+### NOTE! - Copy and paste the below to replace in your settings.json file
+"""
+{
+  "SettingsVersion": 1.2,
+  "SimMode": "Car",
+  "RpcEnabled": true,
+  "EngineSound": false,
+  "CameraDefaults": {
+    "CaptureSettings": [{
+      "Width": 350,
+      "Height": 260,
+      "FOV_Degrees": 90
+    }]
+  }
+}
+"""
+
 from keras.models import Sequential
-from keras.layers import Convolution2D, Activation, Flatten, Dense
+from keras.layers import Convolution2D, Activation, Flatten, Dense, MaxPooling2D
 from keras.optimizers import Adam # usually is pretty fast
 
 from rl.agents.dqn import DQNAgent
@@ -45,13 +61,20 @@ from rl.core import Processor, Env
 from rl.callbacks import FileLogger, ModelIntervalCheckpoint
 
 
+NUM_IMGS_TO_REMEMBER = (3,) 
+IMG_SHAPE = (1190, 260, 4) # W x H x NUM_CHANNELS
+INPUT_SHAPE = NUM_IMGS_TO_REMEMBER + IMG_SHAPE
+NUM_ACTIONS = 3
+
+
+
 class AirSimClientEnv(Env):
   """
   Child class of the abstract base class called 'Env'. Same as the
   OpenAI Gym environment object (https://gym.openai.com/docs/#environments).
   This is the virtual representation of the environment with which
-  the agent will interact. All keras-rl agent objects take an
-  environment as a parameter.
+  the agent will interact (client's environment, more or less). All
+  keras-rl agent objects take an environment as a parameter.
   """
   def __init__(self):
     self.client = airsim.CarClient()
@@ -59,8 +82,10 @@ class AirSimClientEnv(Env):
     client.enableApiControl(True)
     
     self.reward_range = (-np.inf, np.inf)
-    self.action_space = None
-    self.observation_space = None
+
+    # gym things; not sure if need to implement
+    self.action_space = None  # maybe do a np.arange(-1.0, 1.000000001, n/2.0)
+    self.observation_space = None  
 
     self.left_cam_name = '2'
     self.right_cam_name = '1'
@@ -77,12 +102,17 @@ class AirSimClientEnv(Env):
 
     :returns:
       -- observations: Agent's observation of current env, so the list of
-      img responses
+      ImageResponse objects (stitch together in AirSimProcessor)
       -- reward: reward from previous action
       -- done (boolean): true if episode ended; false otherwise
       -- info: dict of with debugging info
     """
-    observation = self.get_composite_sim_image()
+    # puts these in the order should be concatenated (left to r)
+    cam_names = [self.left_cam_name,
+                 self.forward_cam_name,
+                 self.right_cam_name,
+                 self.backward_cam_name]
+    observation = self.request_all_4_sim_images(cam_names)
 
     # can sub in a better reward function later
     collision_info = self.client.simGetCollisionInfo()
@@ -136,31 +166,6 @@ class AirSimClientEnv(Env):
                                         airsim.Vector3r(0.0, 0.0, 11.5))
     # tbh: i have no idea why 11.5 works (3.14 should've been ok, but wasn't)
 
-
-  def get_composite_sim_image(self):
-    """
-    Get snapshots from the left, forward, right, and rear cameras in 1 2D numpy array
-    
-    :param:client: airsim.CarClient() object that has already connected
-    to the simulation
-
-    :returns: 2D numpy array that is a composite of all 4 images. 
-
-    a little help from: https://github.com/Microsoft/AirSim/blob/master/docs/image_apis.md/#Available%20Cameras
-    """
-
-    # puts these in the order should be concatenated (left to r)
-    cam_names = [self.left_cam_name,
-                 self.forward_cam_name,
-                 self.right_cam_name,
-                 self.backward_cam_name]
-
-    # make the request for a snapshot from all 4 cameras (except the first person camera)
-    sim_img_responses = request_all_4_sim_images(client, cam_names)
-    
-    return make_composite_image_from_responses(sim_img_responses, cam_names)
-
-
   def request_all_4_sim_images(self, cam_names):
     """
     Helper to get_composite_sim_image. Make a request to the simulation from the
@@ -183,15 +188,43 @@ class AirSimClientEnv(Env):
     return self.client.simGetImages(list_of_img_request_objs)
 
 
+  
+class AirSimProcessor(Processor):
+  """
+  Processes observations from AirSimClientEnv. In this case,
+  create the composite/panoramic image from the list of
+  ImageResponse objects
+  """
+  self.left_cam_name = '2'
+  self.right_cam_name = '1'
+  self.forward_cam_name = '0'
+  self.backward_cam_name = '4
+
+  def process_observation(self, observation):
+    """
+    What to do with the observation/image from AirSimClientEnv.
+    Extract the images from the list of ImageReponses objects 
+    """
+        # puts these in the order should be concatenated (left to r)
+    cam_names = [self.left_cam_name,
+                 self.forward_cam_name,
+                 self.right_cam_name,
+                 self.backward_cam_name]
+    
+    composite_image = self.make_composite_image_from_responses(observation,
+                                                               cam_names)
+    
+    return composite_image
+
   def make_composite_image_from_responses(self, sim_img_responses, cam_names):
     """
-    Helper to get_composite_sim_image. Take the lists responses, each with
+    Take the list of ImageResponse objects (the observation), each with
     uncompressed 1D RGBA binary string representations of images, convert
     the image to a 2D-4 channel numpy array, and then concatenate all of
     the images into a composite (panoramic-ish) image.
 
-    :param sim_img_responses: dictionary of the responses from a call to
-    request_all_4_sim_images()
+    :param sim_img_responses: list of ImageResponse obj from a call to
+    request_all_4_sim_images() in the AirSimEnv class
     :param cam_names: names of the cameras from which the image request objs
     were gotten; order of this names in cam_names is ASSUMED to be the same
     order in sim_img_responses
@@ -244,13 +277,56 @@ class AirSimClientEnv(Env):
     #airsim.write_png(os.path.normpath('imgs/sim_img'+ str(time.time())+'.png'), composite_img)
 
     return composite_img    
-
-
   
-                                 
 
     
+def init_modeler(num_actions):
+  """
+  Initialize the Keras model that will be passed into the DQNAgent object
 
-# how is an env different from a processor?
-# if i had to guess, i'd say that the env passes stuff off to the
-# processor
+  :param num_actions: number of possible actions the DQNAgent can take. In
+  this file, this is the number of different steering angles the agent can
+  choose from.
+
+  :returns: an uncompiled Keras model
+  """
+  model = Sequential()
+
+  model.add(Convolution2D(128, kernel=32, stride=28, input_shape=INPUT_SHAPE,
+                          data_format='channels_last'))
+  model.add(Activation('relu'))
+  model.add(MaxPooling2D(pool_size=8, strides=8))
+
+  model.add(Flatten())
+
+  model.add(Dense(512))
+  model.add(Activation('relu'))
+  model.add(Dense(num_actions))
+  model.add(Activation('linear'))
+
+  print('Here\'s that model: \n{}'.format(model.summary))
+
+  return model
+
+
+def main():
+  # setup everything
+  model = init_modeler(NUM_ACTIONS)
+  memory = SequentialMemory(limt=10**5, window_length=NUM_IMGS_TO_REMEMBER)
+  processor = AirSimProcessor()
+  policy = LinearAnnealedPolicy(EpsGreedyQPolicy(), attr='eps', value_max=1.0,
+                                value_min=0.1, value_test = 0.05, nb_steps=10**9)   
+  env = AirSimEnv()
+  dqn = DQNAgent(model=model, nb_actions=NUM_ACTIONS, policy=policy,
+                 memory=memory, processor=processor, nb_steps_warmup=10**3,
+                 gamma=0.9, target_model_update=10**3, train_interval=4,
+                 delta_clip=1.0)
+  dqn.compile(Adam(lr=0.05), metrics=['mse'])
+
+  
+  # GO!
+  dqn.fit(env, callbacks=None, nb_steps=10**6)
+
+
+if __name__ == '__main__':
+  main()
