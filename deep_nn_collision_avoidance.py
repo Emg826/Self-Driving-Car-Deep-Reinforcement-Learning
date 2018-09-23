@@ -28,10 +28,6 @@ https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/client.py
 
 helpful for DRL: https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
 """
-import airsim
-import numpy as np
-import time
-import os
 
 ### NOTE! - Copy and paste the below to replace in your settings.json file
 """
@@ -50,75 +46,72 @@ import os
 }
 """
 
+import airsim
+import numpy as np
+import time
+import os
+import random
+
 from keras.models import Sequential
 from keras.layers import Convolution2D, Activation, Flatten, Dense, MaxPooling2D
 from keras.optimizers import Adam # usually is pretty fast
 
-
 IMG_SHAPE = (1190, 260, 4) # W x H x NUM_CHANNELS
-NUM_ACTIONS = 3
+random.seed(3)
 
-
-
-class AirSimProcessor(Env):
+class AirSimEnv():
   """
-  Child class of the abstract base class called 'Env'. Same as the
-  OpenAI Gym environment object (https://gym.openai.com/docs/#environments).
   This is the virtual representation of the environment with which
-  the agent will interact (client's environment, more or less). All
-  keras-rl agent objects take an environment as a parameter.
+  the agent will interact. To the driver, abstraction allows the
+  "environment" of the simulation to just be represented by an
+  image and the car.
   """
   def __init__(self):
     self.client = airsim.CarClient()
-    self.client.confirmConnection()
-    self.client.enableApiControl(True)
-    
-    self.reward_range = (-np.inf, np.inf)
-
-    # gym things; not sure if need to implement
-    self.action_space = None  # maybe do a np.arange(-1.0, 1.000000001, n/2.0)
-    self.observation_space = None  
+    client.confirmConnection()
+    client.enableApiControl(True)
 
     self.left_cam_name = '2'
     self.right_cam_name = '1'
     self.forward_cam_name = '0'
     self.backward_cam_name = '4'
+    
     self.setup_my_cameras(self.client)
 
-
-  def step(self, action):
+  def get_environment_state(self):
     """
-    Run 1 timestep of the simulation given some action.
+    Get state of the environment and the vehicle in the environment.
 
-    :param action: action provided by the env???
-
-    :returns:
-      -- observations: Agent's observation of current env, so the list of
-      ImageResponse objects (stitch together in AirSimProcessor)
-      -- reward: reward from previous action
-      -- done (boolean): true if episode ended; false otherwise
-      -- info: dict of with debugging info
+    :returns: panoramic image, numpy array with shape (heigh, width, (R, G, B, A))
     """
-    print('environment step')
     # puts these in the order should be concatenated (left to r)
     cam_names = [self.left_cam_name,
                  self.forward_cam_name,
                  self.right_cam_name,
                  self.backward_cam_name]
-    observation = self.request_all_4_sim_images(cam_names)
+    sim_img_responses = self.request_all_4_sim_images(cam_names)
+    return self.make_composite_image_from_responses(sim_img_responses)
 
-    # can sub in a better reward function later
-    collision_info = self.client.simGetCollisionInfo()
-    if collision_info.has_collided is True:
-      reward = -1
-    else:
-      reward = 1
+  def get_car_state(self):
+    """
+    Get state of the car in the environment
 
-    done = False
-    info = {'collision_info' : collision_info}
+    :returns: CarState object, which has as attributes: speed, handbrake,
+    collision, kinematics_estimated 
+    """
     
-    return observation, reward, done, info
+    return self.client.getCarState()
+
+  def update_car_controls(self, car_controls):
+    """
+    Send new instructions to the car; update its controls.
     
+    :param car_controls: airsim.CarControls() object
+
+    :returns: nada
+    """
+    return client.setCarControls(car_controls)
+
   def setup_my_cameras(self, client):
     """
     Helper function to set the left, right, forward, and back cameras up
@@ -131,9 +124,6 @@ class AirSimProcessor(Env):
     """
     # pitch, roll, yaw ; each is in radians where
     # 15 degrees = 0.261799 (don't ask me why they used radians...)
-    # 10 degrees = 0.174533, 60 degrees = 1.0472, and 180 degrees = 3.14159
-    # reason for +- 0.70: forward camera FOV is 90 degrees or 1.57 radians;
-    # 0.7 is roughly half that and seem to work well, so I'm sticking with it
     # NOTE: these images are reflected over a vertical line: left in the image
     # is actually right in the simulation...should be ok for CNN since it is
     # spatially invariant, but if not, then come back and change these
@@ -167,49 +157,6 @@ class AirSimProcessor(Env):
                                                            compress=False) )
 
     return self.client.simGetImages(list_of_img_request_objs)
-
-
-  
-class AirSimProcessor(Processor):
-  """
-  Processes observations from AirSimClientEnv. In this case,
-  create the composite/panoramic image from the list of
-  ImageResponse objects
-  """
-  def __init__(self):
-    self.left_cam_name = '2'
-    self.right_cam_name = '1'
-    self.forward_cam_name = '0'
-    self.backward_cam_name = '4'
-
-    self.client = airsim.CarClient()
-    self.client.confirmConnection()
-    self.client.enableApiControl(True)
-    
-    self.reward_range = (-np.inf, np.inf)
-
-    # gym things; not sure if need to implement
-    self.action_space = None  # maybe do a np.arange(-1.0, 1.000000001, n/2.0)
-    self.observation_space = None  
-
-    self.setup_my_cameras(self.client)
-
-  def process_observation(self, observation):
-    """
-    What to do with the observation/image from AirSimClientEnv.
-    Extract the images from the list of ImageReponses objects 
-    """
-    print('process observation')
-        # puts these in the order should be concatenated (left to r)
-    cam_names = [self.left_cam_name,
-                 self.forward_cam_name,
-                 self.right_cam_name,
-                 self.backward_cam_name]
-    observation = self.request_all_4_sim_images(cam_names)
-    composite_image = self.make_composite_image_from_responses(observation,
-                                                               cam_names)
-    
-    return composite_image
 
   def make_composite_image_from_responses(self, sim_img_responses, cam_names):
     """
@@ -258,10 +205,7 @@ class AirSimProcessor(Processor):
       
       dict_of_2D_imgs.update({ cam_name : img_2D_RGBA})
       
-    # now with all images in 2D, 4 channel form, stitch them together
-    # NOTE THESE ARRAY INDEXINGS ARE ASSUMING LEFT-FWD-RIGHT-BACK ordering
-    # row, column indexing in []'s
-    # int((2*width/5)):: is the right 60% of img; 0 is left 2 is right 3 is rear
+    # customized to get a panoramic image w/ given camera orientations
     composite_img = np.concatenate([ dict_of_2D_imgs[cam_names[3]][:, int((2*width/5))::],
                                      dict_of_2D_imgs[cam_names[0]][:,int((2*width/5))::],
                                      dict_of_2D_imgs[cam_names[1]],
@@ -269,158 +213,191 @@ class AirSimProcessor(Processor):
                                      dict_of_2D_imgs[cam_names[3]][:,0:int((3*width/5))] ], axis=1)
 
     # for debugging and getting cameras right
-    #airsim.write_png(os.path.normpath('imgs/sim_img'+ str(time.time())+'.png'), composite_img)
+    #airsim.write_png(os.path.normpath('sim_img'+ str(time.time())+'.png'), composite_img)
 
     return composite_img
 
-  def process_state_batch(self, batch):
-    return batch
-
-  def process_reward(self, reward):
-    return reward
-
-  def step(self, action):
+  def emergency_reset(self):
     """
-    Run 1 timestep of the simulation given some action.
-
-    :param action: action provided by the env???
-
-    :returns:
-      -- observations: Agent's observation of current env, so the list of
-      ImageResponse objects (stitch together in AirSimProcessor)
-      -- reward: reward from previous action
-      -- done (boolean): true if episode ended; false otherwise
-      -- info: dict of with debugging info
+    Does not bother to pause the car before resetting;
+    just tries to immediately reset. Good for when the car is
+    falling through the map and need to catch it before it falls
+    through.
     """
-    print('environment step')
-    # puts these in the order should be concatenated (left to r)
-    cam_names = [self.left_cam_name,
-                 self.forward_cam_name,
-                 self.right_cam_name,
-                 self.backward_cam_name]
-    observation = self.request_all_4_sim_images(cam_names)
-
-    # can sub in a better reward function later
-    collision_info = self.client.simGetCollisionInfo()
-    if collision_info.has_collided is True:
-      reward = -1
-    else:
-      reward = 1
-
-    done = False
-    info = {'collision_info' : collision_info}
-    
-    return observation, reward, done, info
-    
-  def reset(self):
-    """
-    When need to reset the environment, do this.
-    """
+    print('emergency reset triggered')
     self.client.reset()
-    
-  def render(self):
-    return self.step(None) # n/a for AirSim -- all contained in step()
 
-  def close(self):
-    pass # garbage collection if need any
-
-  def setup_my_cameras(self, client):
+  def normal_reset(self):
     """
-    Helper function to set the left, right, forward, and back cameras up
-    on the vehicle as I've see fit.
-
-    :param client: airsim.CarClient() object that
-    already connected to the sim
-    
-    :returns: nada
+    Pauses the simulation before resetting the vehicle.
     """
-    # pitch, roll, yaw ; each is in radians where
-    # 15 degrees = 0.261799 (don't ask me why they used radians...)
-    # 10 degrees = 0.174533, 60 degrees = 1.0472, and 180 degrees = 3.14159
-    # reason for +- 0.70: forward camera FOV is 90 degrees or 1.57 radians;
-    # 0.7 is roughly half that and seem to work well, so I'm sticking with it
-    # NOTE: these images are reflected over a vertical line: left in the image
-    # is actually right in the simulation...should be ok for CNN since it is
-    # spatially invariant, but if not, then come back and change these
-    self.client.simSetCameraOrientation(self.left_cam_name,
-                                        airsim.Vector3r(0.0, 0.0, -0.68))
-    self.client.simSetCameraOrientation(self.right_cam_name,
-                                   airsim.Vector3r(0.0, 0.0, 0.68))
-    self.client.simSetCameraOrientation(self.forward_cam_name,
-                                        airsim.Vector3r(0.0, 0.0, 0.0))
-    self.client.simSetCameraOrientation(self.backward_cam_name,
-                                        airsim.Vector3r(0.0, 0.0, 11.5))
-    # tbh: i have no idea why 11.5 works (3.14 should've been ok, but wasn't)
-
-  def request_all_4_sim_images(self, cam_names):
-    """
-    Helper to get_composite_sim_image. Make a request to the simulation from the
-    client for a snapshot from each of the 4 cameras.
-
-    :param client: airsim.CarClient() object that has already connected to the simulation
-    :param cam_names: list of camera names, order of list is order in which requests will
-    be made and (presumably) returned
-    
-    :returns: list where each element is an airsim.ImageResponse() obj
-    """
-    # build list of airsim.ImageRequest objects to give to client.simGetImages()
-    list_of_img_request_objs = []
-    for cam_name in cam_names:
-      list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
-                                                           image_type=airsim.ImageType.Scene,
-                                                           pixels_as_float=False,
-                                                           compress=False) )
-
-    return self.client.simGetImages(list_of_img_request_objs)
-
-    
-def init_modeler(num_actions):
-  """
-  Initialize the Keras model that will be passed into the DQNAgent object
-
-  :param num_actions: number of possible actions the DQNAgent can take. In
-  this file, this is the number of different steering angles the agent can
-  choose from.
-
-  :returns: an uncompiled Keras model
-  """
-  model = Sequential()
-
-  model.add(Convolution2D(128, kernel_size=32, strides=28,
-                          data_format='channels_last', input_shape=IMG_SHAPE))
-  model.add(Activation('relu'))
-  model.add(MaxPooling2D(pool_size=8, strides=8))
-
-  model.add(Flatten())
-
-  model.add(Dense(512))
-  model.add(Activation('relu'))
-  model.add(Dense(num_actions))
-  model.add(Activation('linear'))
-
-  print(model.summary())
-
-  return model
-
-
-def main():
-  # setup everything
-  model = init_modeler(NUM_ACTIONS)
-  memory = SequentialMemory(limit=10**4, window_length=NUM_IMGS_TO_REMEMBER)
-  processor = AirSimProcessor()
-  policy = LinearAnnealedPolicy(EpsGreedyQPolicy(), attr='eps', value_max=1.0,
-                                value_min=0.1, value_test = 0.05, nb_steps=10**9)   
-  env = AirSimClientEnv()
-  dqn = DQNAgent(model=model, nb_actions=NUM_ACTIONS, policy=policy,
-                 memory=memory, processor=processor, nb_steps_warmup=0,
-                 gamma=0.9, target_model_update=10**3, train_interval=1,
-                 delta_clip=1.0)
-  dqn.compile(Adam(lr=0.05), metrics=['mse'])
-
+    self.client.simPause(True)
+    self.reset()
+    self.simPause(False)
   
-  # GO!
-  dqn.fit(env, callbacks=None, nb_steps=10**6)
+
+class DriverAgent():
+  """
+  The driver of the vehicle
+  """
+  
+  def __init__(self, num_steering_angles, replay_memory_size,
+               mini_batch_size=128):
+    """
+    
+    """
+    self.replay_memory = ReplayMemory(replay_memory_size)
+    self.action_space = np.arange(-1.0, 1.0000001, 2.0/num_steering_angles)
+    self.num_steering_angles = num_steering_angles
+
+    # this neural network will approximate the max_action(Q(state, action))
+    self.policy_approximator = Sequential()
+
+    self.policy_approximator.add(Convolution2D(128, kernel_size=32, strides=28, input_shape=INPUT_SHAPE,
+                                 data_format='channels_last', input_shape=INPUT_SHAPE))
+    self.policy_approximator.add(Activation('relu'))
+    self.policy_approximator.add(MaxPooling2D(pool_size=8, strides=8))
+
+    self.policy_approximator.add(Flatten())
+
+    self.policy_approximator.add(Dense(512))
+    self.policy_approximator.add(Activation('relu'))
+    self.policy_approximator.add(Dense(num_steering_angles))
+    self.policy_approximator.add(Activation('linear'))
+
+    self.policy_approximator.compile(optimizer='adam')
+
+    self.mini_batch_size = mini_batch_size
+
+  def reward_calc(self, collision_):
+    pass
+
+  def get_steering_angle(self):
+    pass
+
+  def get_random_steering_angle(self):
+    self.action_space[random.randint(0, self.num_steering_angles-1)]
+
+class ReplayMemory():
+                                  
+  def __init__(self, replay_memory_size):
+    # preallocate requisite memory
+    self.states = [np.empty(IMG_SHAPE, dtype=np.uint8)] * replay_memory_size   # panoramic/composite images
+    self.actions = [0.0] * replay_memory_size # steering angles
+    self.rewards = [0] * replay_memory_size # maybe collision/ no collision?
+    
+    self.replay_memory_size = replay_memory_size  # num past imgs to remember
+    self.idx_of_current_time_step = 0
+
+  def remember_state(self, state):
+    """
+    :param state: image, numpy array of shape (W, H, RGBA channels)
+    """
+    self.states[self.idx_of_current_time_step] = state
+
+  def remember_action(self, action):
+    """
+    : param actions: should be a float, the steering angle
+    """
+    self.states[self.idx_of_current_time_step] = action
+
+  def remember_reward(self, reward):
+    """
+    :param reward: some float, reward
+    """
+    self.rewards[self.idx_of_current_time_step] = reward
+
+    self.idx_of_current_time_step = (self.idx_of_current_time_step + 1) % self.replay_memory_size
+
+    
 
 
-if __name__ == '__main__':
-  main()
+# thank you: https://leonardoaraujosantos.gitbooks.io/artificial-inteligence/content/deep_q_learning.html
+def init_car_controls():
+  car_controls = airsim.CarControls()
+  car_controls.throttle = 0.3
+  car_controls.steering = 0.0
+  car_controls.is_manual_gear = True
+  car_controls.manual_gear = 1  # should constrain speed
+
+  return car_controls
+
+def reward(car_state):
+  """ :param car_state: airsim.CarState() of car in sim"""
+  
+  if car_state.collisions.has_collided is True:
+    # collisions attrib has object_id (collided w/), so
+    # very easily could modify and see if collided with person
+    # or vehicle or building or curb or etc. 
+    return -1.0 * (1 + penetration_depth)
+  else:
+    return 1.0
+  
+
+print('Getting ready')
+car_controls = init_car_controls()
+replay_memory_size = 1500 # units=num images
+episode_length = 2000
+assert episode_length > replay_memory_size
+num_episodes = 10
+epsilon = 1.0  # probability of selecting a random action/steering angle
+episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
+num_steering_angles = 10
+reward_delay = 0.05 # delay until know partial reward
+
+driver_agent = DriverAgent(num_steering_angles=num_steering_angles,
+                           replay_memory_size=replay_memory_size)
+airsim_env = AirSimEnv()
+
+
+# for each episode (arbitrary length of time)
+for episode_num in range(num_episodes):
+  print('Starting episode {]'.format(episode_num+1))
+  airsim_env.normal_reset()
+  
+  # decay that epsilon value
+  if episode_num > 0:
+    epsilon -= episodic_epsilon_linear_decay_amount
+
+  # for each time step
+  for time_step in range(episode_length):
+    print('\t time step {}'.format(time_step+1))
+
+    # OBSERVATIONS
+    car_state = airsim_env.get_car_state()
+
+    # if car is starting to fall into oblivion
+    if car_state.kinematics_estimated.position.z_val > -0.6:
+      airsim_env.emergency_reset()
+      time.sleep(2)
+      
+    env_state = airsim_env.get_environment_state()
+    driver_agent.replay_memory.remember_state(env_state)
+
+    # ACTION
+    # time to determine what to do
+    # take random action w/ probability epislon (for exploration pusposes)
+    if random.random() < epsilon:
+      steering_angle = driver_agent.get_random_steering_angle()
+    else:
+      # get an output from the NN and interpret it
+      steering_angle = 0.0
+
+    car_controls.steering_angle = steering_angle
+    airsim_env.update_car_controls(car_controls)
+    
+    driver_agent.replay_memory.remember_action(steering_angle)
+
+    # REWARD
+    time.sleep(reward_delay)
+
+    # get the reward
+    reward = airsim_env.get_car_state().collisions.has_collided
+    
+    driver_agent.replay_memory.remember_reward(reward)
+    
+    
+
+    
+  
+  
