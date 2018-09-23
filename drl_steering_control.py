@@ -51,19 +51,19 @@ import os
 """
 
 from keras.models import Sequential
-from keras.layers import Convolution2D, Activation, Flatten, Dense, MaxPooling2D
+from keras.layers import Convolution2D, Activation, Flatten, Dense, MaxPooling2D, Permute
 from keras.optimizers import Adam # usually is pretty fast
 
 from rl.agents.dqn import DQNAgent
-from rl.policy import LinearAnnealingPolicy, EpsGreedyQPolicy
+from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
 from rl.memory import SequentialMemory
 from rl.core import Processor, Env
 from rl.callbacks import FileLogger, ModelIntervalCheckpoint
 
 
-NUM_IMGS_TO_REMEMBER = (3,) 
+NUM_IMGS_TO_REMEMBER = 1
 IMG_SHAPE = (1190, 260, 4) # W x H x NUM_CHANNELS
-INPUT_SHAPE = NUM_IMGS_TO_REMEMBER + IMG_SHAPE
+INPUT_SHAPE = (NUM_IMGS_TO_REMEMBER,) + IMG_SHAPE
 NUM_ACTIONS = 3
 
 
@@ -78,8 +78,8 @@ class AirSimClientEnv(Env):
   """
   def __init__(self):
     self.client = airsim.CarClient()
-    client.confirmConnection()
-    client.enableApiControl(True)
+    self.client.confirmConnection()
+    self.client.enableApiControl(True)
     
     self.reward_range = (-np.inf, np.inf)
 
@@ -107,6 +107,7 @@ class AirSimClientEnv(Env):
       -- done (boolean): true if episode ended; false otherwise
       -- info: dict of with debugging info
     """
+    print('environment step')
     # puts these in the order should be concatenated (left to r)
     cam_names = [self.left_cam_name,
                  self.forward_cam_name,
@@ -133,7 +134,7 @@ class AirSimClientEnv(Env):
     self.client.reset()
     
   def render(self):
-    pass # n/a for AirSim -- all contained in step()
+    return self.step(None) # n/a for AirSim -- all contained in step()
 
   def close(self):
     pass # garbage collection if need any
@@ -195,22 +196,36 @@ class AirSimProcessor(Processor):
   create the composite/panoramic image from the list of
   ImageResponse objects
   """
-  self.left_cam_name = '2'
-  self.right_cam_name = '1'
-  self.forward_cam_name = '0'
-  self.backward_cam_name = '4
+  def __init__(self):
+    self.left_cam_name = '2'
+    self.right_cam_name = '1'
+    self.forward_cam_name = '0'
+    self.backward_cam_name = '4'
+
+    self.client = airsim.CarClient()
+    self.client.confirmConnection()
+    self.client.enableApiControl(True)
+    
+    self.reward_range = (-np.inf, np.inf)
+
+    # gym things; not sure if need to implement
+    self.action_space = None  # maybe do a np.arange(-1.0, 1.000000001, n/2.0)
+    self.observation_space = None  
+
+    self.setup_my_cameras(self.client)
 
   def process_observation(self, observation):
     """
     What to do with the observation/image from AirSimClientEnv.
     Extract the images from the list of ImageReponses objects 
     """
+    print('process observation')
         # puts these in the order should be concatenated (left to r)
     cam_names = [self.left_cam_name,
                  self.forward_cam_name,
                  self.right_cam_name,
                  self.backward_cam_name]
-    
+    observation = self.request_all_4_sim_images(cam_names)
     composite_image = self.make_composite_image_from_responses(observation,
                                                                cam_names)
     
@@ -252,8 +267,8 @@ class AirSimProcessor(Processor):
 
       # reshape that into a 2D array then flip upside down
       # (because orignal image is flipped)
-      #img_2D_RGBA = np.flipud(img_1D.reshape(sim_img_response.height,
-      #                                       sim_img_response.width,
+      #img_2D_RGBA = np.flipud(img_1D.reshape(height,
+      #                                       width,
       #                                       4))
 
       # But! CNN is spatial invariant, meaning it doesn't care if the
@@ -276,8 +291,107 @@ class AirSimProcessor(Processor):
     # for debugging and getting cameras right
     #airsim.write_png(os.path.normpath('imgs/sim_img'+ str(time.time())+'.png'), composite_img)
 
-    return composite_img    
-  
+    return composite_img
+
+  def process_state_batch(self, batch):
+    return batch
+
+  def process_reward(self, reward):
+    return reward
+
+  def step(self, action):
+    """
+    Run 1 timestep of the simulation given some action.
+
+    :param action: action provided by the env???
+
+    :returns:
+      -- observations: Agent's observation of current env, so the list of
+      ImageResponse objects (stitch together in AirSimProcessor)
+      -- reward: reward from previous action
+      -- done (boolean): true if episode ended; false otherwise
+      -- info: dict of with debugging info
+    """
+    print('environment step')
+    # puts these in the order should be concatenated (left to r)
+    cam_names = [self.left_cam_name,
+                 self.forward_cam_name,
+                 self.right_cam_name,
+                 self.backward_cam_name]
+    observation = self.request_all_4_sim_images(cam_names)
+
+    # can sub in a better reward function later
+    collision_info = self.client.simGetCollisionInfo()
+    if collision_info.has_collided is True:
+      reward = -1
+    else:
+      reward = 1
+
+    done = False
+    info = {'collision_info' : collision_info}
+    
+    return observation, reward, done, info
+    
+  def reset(self):
+    """
+    When need to reset the environment, do this.
+    """
+    self.client.reset()
+    
+  def render(self):
+    return self.step(None) # n/a for AirSim -- all contained in step()
+
+  def close(self):
+    pass # garbage collection if need any
+
+  def setup_my_cameras(self, client):
+    """
+    Helper function to set the left, right, forward, and back cameras up
+    on the vehicle as I've see fit.
+
+    :param client: airsim.CarClient() object that
+    already connected to the sim
+    
+    :returns: nada
+    """
+    # pitch, roll, yaw ; each is in radians where
+    # 15 degrees = 0.261799 (don't ask me why they used radians...)
+    # 10 degrees = 0.174533, 60 degrees = 1.0472, and 180 degrees = 3.14159
+    # reason for +- 0.70: forward camera FOV is 90 degrees or 1.57 radians;
+    # 0.7 is roughly half that and seem to work well, so I'm sticking with it
+    # NOTE: these images are reflected over a vertical line: left in the image
+    # is actually right in the simulation...should be ok for CNN since it is
+    # spatially invariant, but if not, then come back and change these
+    self.client.simSetCameraOrientation(self.left_cam_name,
+                                        airsim.Vector3r(0.0, 0.0, -0.68))
+    self.client.simSetCameraOrientation(self.right_cam_name,
+                                   airsim.Vector3r(0.0, 0.0, 0.68))
+    self.client.simSetCameraOrientation(self.forward_cam_name,
+                                        airsim.Vector3r(0.0, 0.0, 0.0))
+    self.client.simSetCameraOrientation(self.backward_cam_name,
+                                        airsim.Vector3r(0.0, 0.0, 11.5))
+    # tbh: i have no idea why 11.5 works (3.14 should've been ok, but wasn't)
+
+  def request_all_4_sim_images(self, cam_names):
+    """
+    Helper to get_composite_sim_image. Make a request to the simulation from the
+    client for a snapshot from each of the 4 cameras.
+
+    :param client: airsim.CarClient() object that has already connected to the simulation
+    :param cam_names: list of camera names, order of list is order in which requests will
+    be made and (presumably) returned
+    
+    :returns: list where each element is an airsim.ImageResponse() obj
+    """
+    # build list of airsim.ImageRequest objects to give to client.simGetImages()
+    list_of_img_request_objs = []
+    for cam_name in cam_names:
+      list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
+                                                           image_type=airsim.ImageType.Scene,
+                                                           pixels_as_float=False,
+                                                           compress=False) )
+
+    return self.client.simGetImages(list_of_img_request_objs)
 
     
 def init_modeler(num_actions):
@@ -292,8 +406,8 @@ def init_modeler(num_actions):
   """
   model = Sequential()
 
-  model.add(Convolution2D(128, kernel=32, stride=28, input_shape=INPUT_SHAPE,
-                          data_format='channels_last'))
+  model.add(Convolution2D(128, kernel_size=32, strides=28,
+                          data_format='channels_last', input_shape=IMG_SHAPE))
   model.add(Activation('relu'))
   model.add(MaxPooling2D(pool_size=8, strides=8))
 
@@ -304,7 +418,7 @@ def init_modeler(num_actions):
   model.add(Dense(num_actions))
   model.add(Activation('linear'))
 
-  print('Here\'s that model: \n{}'.format(model.summary))
+  print(model.summary())
 
   return model
 
@@ -312,14 +426,14 @@ def init_modeler(num_actions):
 def main():
   # setup everything
   model = init_modeler(NUM_ACTIONS)
-  memory = SequentialMemory(limt=10**5, window_length=NUM_IMGS_TO_REMEMBER)
+  memory = SequentialMemory(limit=10**4, window_length=NUM_IMGS_TO_REMEMBER)
   processor = AirSimProcessor()
   policy = LinearAnnealedPolicy(EpsGreedyQPolicy(), attr='eps', value_max=1.0,
                                 value_min=0.1, value_test = 0.05, nb_steps=10**9)   
-  env = AirSimEnv()
+  env = AirSimClientEnv()
   dqn = DQNAgent(model=model, nb_actions=NUM_ACTIONS, policy=policy,
-                 memory=memory, processor=processor, nb_steps_warmup=10**3,
-                 gamma=0.9, target_model_update=10**3, train_interval=4,
+                 memory=memory, processor=processor, nb_steps_warmup=0,
+                 gamma=0.9, target_model_update=10**3, train_interval=1,
                  delta_clip=1.0)
   dqn.compile(Adam(lr=0.05), metrics=['mse'])
 
