@@ -242,38 +242,49 @@ class DriverAgent():
   """
   
   def __init__(self, num_steering_angles, replay_memory_size,
-               mini_batch_size=128):
+               mini_batch_size=128, gamma=0.98):
     """
     
     """
-    self.replay_memory = ReplayMemory(replay_memory_size)
+    # state_t, action_t, reward_t, state_t+1
+    self.replay_memory = [ (np.empty(INPUT_SHAPE, dtype=np.uint8),
+                            0.0,
+                            0.0,
+                            np.empty(INPUT_SHAPE, dtype=np.uint8)) ] * replay_memory_size
+                            
     self.action_space = np.arange(-1.0, 1.0000001, 2.0/num_steering_angles)
     self.num_steering_angles = num_steering_angles
 
     # this neural network will approximate the max_action(Q(state, action))
     # which approximates: max_action[ max(R) ]
-    self.policy_approximator = Sequential()
+    self.online_Q = Sequential()
 
-    self.policy_approximator.add(Convolution2D(128, kernel_size=32, strides=28, input_shape=INPUT_SHAPE,
+    self.online_Q.add(Convolution2D(128, kernel_size=32, strides=28, input_shape=INPUT_SHAPE,
                                  data_format='channels_last', input_shape=INPUT_SHAPE))
-    self.policy_approximator.add(Activation('relu'))
-    self.policy_approximator.add(MaxPooling2D(pool_size=8, strides=8))
+    self.online_Q.add(Activation('relu'))
+    self.online_Q.add(MaxPooling2D(pool_size=8, strides=8))
 
-    self.policy_approximator.add(Flatten())
+    self.online_Q.add(Flatten())
 
-    self.policy_approximator.add(Dense(512))
-    self.policy_approximator.add(Activation('relu'))
-    self.policy_approximator.add(Dense(num_steering_angles))
+    self.online_Q.add(Dense(512))
+    self.online_Q.add(Activation('relu'))
+    self.online_Q.add(Dense(num_steering_angles))
     # output Q value for each possible action; pick action w/ highest Q value
-    self.policy_approximator.add(Activation('linear'))
-
-    self.policy_approximator.compile(optimizer='adam')
+    self.online_Q.add(Activation('linear'))
+    
+    self.online_Q.compile(optimizer='adam') # used for selecting actions -- copies weights from offline
+    self.offline_Q = self.online_Q # target network -- used to update weights
 
     self.mini_batch_size = mini_batch_size
+    self.gamma = gamma
 
   def reward_calc(self, collision_):
     pass
 
+  def mini_batch_sample(self):
+    pass
+
+  def 
   def get_steering_angle(self, state):
     """
     Use the policy approximating neural network to calculate Q
@@ -289,36 +300,6 @@ class DriverAgent():
   def get_random_steering_angle(self):
     self.action_space[random.randint(0, self.num_steering_angles-1)]
 
-class ReplayMemory():
-  """ Replay memory for the Deep Q net; helps break correlations between samples"""
-  def __init__(self, replay_memory_size):
-    # preallocate requisite memory
-    self.states = [np.empty(IMG_SHAPE, dtype=np.uint8)] * replay_memory_size   # panoramic/composite images
-    self.actions = [0.0] * replay_memory_size # steering angles
-    self.rewards = [0] * replay_memory_size # maybe collision/ no collision?
-    
-    self.replay_memory_size = replay_memory_size  # num past imgs to remember
-    self.idx_of_current_time_step = 0
-
-  def remember_state(self, state):
-    """
-    :param state: image, numpy array of shape (W, H, RGBA channels)
-    """
-    self.states[self.idx_of_current_time_step] = state
-
-  def remember_action(self, action):
-    """
-    :param actions: should be a float, the steering angle
-    """
-    self.states[self.idx_of_current_time_step] = action
-
-  def remember_reward(self, reward):
-    """
-    :param reward: some float, reward
-    """
-    self.rewards[self.idx_of_current_time_step] = reward
-
-    self.idx_of_current_time_step = (self.idx_of_current_time_step + 1) % self.replay_memory_size
 
     
 
@@ -339,7 +320,7 @@ def reward(car_state):
     # collisions attrib has object_id (collided w/), so
     # very easily could modify and see if collided with person
     # or vehicle or building or curb or etc. 
-    return -1.0 * (1 + penetration_depth)
+    return -1.0
   else:
     return 1.0
   
@@ -365,7 +346,7 @@ for episode_num in range(num_episodes):
   print('Starting episode {]'.format(episode_num+1))
   airsim_env.normal_reset()
   
-  # decay that epsilon value
+  #  decay that epsilon value by const val
   if episode_num > 0:
     epsilon -= episodic_epsilon_linear_decay_amount
 
@@ -373,24 +354,24 @@ for episode_num in range(num_episodes):
   for time_step in range(episode_length):
     print('\t time step {}'.format(time_step+1))
 
-    # OBSERVATIONS
+    # Observation time_step+1
     car_state = airsim_env.get_car_state()
 
     # if car is starting to fall into oblivion
     if car_state.kinematics_estimated.position.z_val > -0.6:
       airsim_env.emergency_reset()
       
-    env_state = airsim_env.get_environment_state()
-    driver_agent.replay_memory.remember_state(env_state)
+    composite_image = airsim_env.get_environment_state()
+    driver_agent.replay_memory.remember_state(composite_image)
 
-    # ACTIONS
+    # Actions
     # time to determine what to do
     # take random action w/ probability epislon (for exploration pusposes)
     if random.random() < epsilon:
-      steering_angle = driver_agent.get_random_steering_angle()
+      steering_angle = driver_agent.get_random_steering_angle(composite_image)
     else:
       # get an output from the NN and interpret it
-      steering_angle = 0.0
+      steering_angle = driver_agent.get_steering_angle(composite_image)
 
     car_controls.steering_angle = steering_angle
     airsim_env.update_car_controls(car_controls)
@@ -410,3 +391,7 @@ for episode_num in range(num_episodes):
     
   
   
+clone net Q to obtain target Q' and use Q' for
+generating the Q learning targets yj for the following C updates to Q
+
+phi is just a preprocessing image func
