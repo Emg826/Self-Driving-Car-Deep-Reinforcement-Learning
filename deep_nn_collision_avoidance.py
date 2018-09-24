@@ -234,15 +234,22 @@ class AirSimEnv():
     self.client.simPause(True)
     self.reset()
     self.simPause(False)
+
+  def freeze_sim(self):
+    self.client.simPause(True)
+
+  def unfreeze_sim(self):
+    self.client.simPause(False)
+    
   
 
 class DriverAgent():
   """
-  The driver of the vehicle
+  The driver of the vehicle, a deep Q network that uses
+  deep Q learning.
   """
-  
   def __init__(self, num_steering_angles, replay_memory_size,
-               mini_batch_size=64, gamma=0.98, ):
+               mini_batch_size=64, gamma=0.98):
     """
     
     """
@@ -298,12 +305,22 @@ class DriverAgent():
     return self.replay_memory[start_idx:end_idx]
 
 
-  def train(self, composite_image, car_state):
+  def train(self):
     """
     Train the online network; offline network is produces target Q vals
     """
-    pass
+    mini_batch_of_quadruples = self.mini_batch_sample()
+    # this is the confusing part of the algorithm
+    # experience replay is how "future" rewards are used;
+    # not literally the future, just the future relative to 1st sample in batch
 
+    # training the online Q, btw; offline Q produces targets
+    """
+Sample rand
+Set
+Perform
+in Algorithm 1
+"""
 
   def get_steering_angle(self, state):
     """
@@ -346,8 +363,6 @@ def init_car_controls():
   car_controls.manual_gear = 1  # should constrain speed
 
   return car_controls
-
-
   
 
 print('Getting ready')
@@ -364,9 +379,7 @@ reward_delay = 0.05 # seconds until know assign reward
 driver_agent = DriverAgent(num_steering_angles=num_steering_angles,
                            replay_memory_size=replay_memory_size)
 airsim_env = AirSimEnv()
-
-
-
+airsim_env.freeze()  # freeze until enter loops
 
 
 # for each episode (arbitrary length of time)
@@ -381,6 +394,7 @@ for episode_num in range(num_episodes):
   # for each time step
   for t in range(1, episode_length+1):
     print('\t time step {}'.format(t))
+    airsim_env.unfreeze()   # unfreeze for init loop or after previous step
 
     # Observation t
     car_state_t = airsim_env.get_car_state()
@@ -391,6 +405,7 @@ for episode_num in range(num_episodes):
       
     state_t = airsim_env.get_environment_state() # panoramic image
 
+    airsim_env.freeze()  # freeze to select steering angle
     # Action t
     # if roll for random steering angle w/ probability epsilon
     if random.random() < epsilon:
@@ -400,29 +415,36 @@ for episode_num in range(num_episodes):
       action_t = driver_agent.get_steering_angle(state_t)
 
     car_controls.steering_angle = action_t
+
+    airsim_env.unfreeze()  # unfreeze to issue steering angle
     airsim_env.update_car_controls(car_controls)
 
-
     # Reward t 
-    time.sleep(reward_delay) # let car drive on given instructions for a bit
-    
+    time.sleep(reward_delay)  # wait for instructions to execute
+
+    # State t+1
     car_state_t_plus_1 = airsim_env.get_car_state()
     state_t_plus_1 = airsim_env.get_environment_state()
 
-    
-    
+    airsim_env.freeze()  # freeze to do training stuff
     
     driver_agent.remember( (state_t,
                             action_t,
                             reward_t,
                             state_t_plus_1) )
-    
-    
+
+    driver_agent.train()
+
+    if (time_step + episode_length*num_episodes) % c == 0:
+      # copy online weight to offline, target network
+
+  # END inner for
+# END OUTER for
 
     
-  
-  
+"""
 clone net Q to obtain target Q' and use Q' for
 generating the Q learning targets yj for the following C updates to Q
 
 phi is just a preprocessing image func
+"""
