@@ -251,6 +251,7 @@ class DriverAgent():
     self.num_steering_angles = num_steering_angles
 
     # this neural network will approximate the max_action(Q(state, action))
+    # which approximates: max_action[ max(R) ]
     self.policy_approximator = Sequential()
 
     self.policy_approximator.add(Convolution2D(128, kernel_size=32, strides=28, input_shape=INPUT_SHAPE,
@@ -263,6 +264,7 @@ class DriverAgent():
     self.policy_approximator.add(Dense(512))
     self.policy_approximator.add(Activation('relu'))
     self.policy_approximator.add(Dense(num_steering_angles))
+    # output Q value for each possible action; pick action w/ highest Q value
     self.policy_approximator.add(Activation('linear'))
 
     self.policy_approximator.compile(optimizer='adam')
@@ -272,14 +274,23 @@ class DriverAgent():
   def reward_calc(self, collision_):
     pass
 
-  def get_steering_angle(self):
-    pass
+  def get_steering_angle(self, state):
+    """
+    Use the policy approximating neural network to calculate Q
+    values for each of the possible steering angles. Pick the
+    steering angle with the highest Q value.
+
+    :param state: the composite image from airsim_env.get_composite_image()
+    """
+
+
+    # g
 
   def get_random_steering_angle(self):
     self.action_space[random.randint(0, self.num_steering_angles-1)]
 
 class ReplayMemory():
-                                  
+  """ Replay memory for the Deep Q net; helps break correlations between samples"""
   def __init__(self, replay_memory_size):
     # preallocate requisite memory
     self.states = [np.empty(IMG_SHAPE, dtype=np.uint8)] * replay_memory_size   # panoramic/composite images
@@ -297,7 +308,7 @@ class ReplayMemory():
 
   def remember_action(self, action):
     """
-    : param actions: should be a float, the steering angle
+    :param actions: should be a float, the steering angle
     """
     self.states[self.idx_of_current_time_step] = action
 
@@ -310,7 +321,6 @@ class ReplayMemory():
     self.idx_of_current_time_step = (self.idx_of_current_time_step + 1) % self.replay_memory_size
 
     
-
 
 # thank you: https://leonardoaraujosantos.gitbooks.io/artificial-inteligence/content/deep_q_learning.html
 def init_car_controls():
@@ -343,7 +353,7 @@ num_episodes = 10
 epsilon = 1.0  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
 num_steering_angles = 10
-reward_delay = 0.05 # delay until know partial reward
+reward_delay = 0.05 # seconds until know assign reward
 
 driver_agent = DriverAgent(num_steering_angles=num_steering_angles,
                            replay_memory_size=replay_memory_size)
@@ -369,12 +379,11 @@ for episode_num in range(num_episodes):
     # if car is starting to fall into oblivion
     if car_state.kinematics_estimated.position.z_val > -0.6:
       airsim_env.emergency_reset()
-      time.sleep(2)
       
     env_state = airsim_env.get_environment_state()
     driver_agent.replay_memory.remember_state(env_state)
 
-    # ACTION
+    # ACTIONS
     # time to determine what to do
     # take random action w/ probability epislon (for exploration pusposes)
     if random.random() < epsilon:
