@@ -68,14 +68,14 @@ class AirSimEnv():
   """
   def __init__(self):
     self.client = airsim.CarClient()
-    client.confirmConnection()
-    client.enableApiControl(True)
+    self.client.confirmConnection()
+    self.client.enableApiControl(True)
 
     self.left_cam_name = '2'
     self.right_cam_name = '1'
     self.forward_cam_name = '0'
     self.backward_cam_name = '4'
-    
+
     self.setup_my_cameras(self.client)
 
   def get_environment_state(self):
@@ -97,15 +97,15 @@ class AirSimEnv():
     Get state of the car in the environment
 
     :returns: CarState object, which has as attributes: speed, handbrake,
-    collision, kinematics_estimated 
+    collision, kinematics_estimated
     """
-    
+
     return self.client.getCarState()
 
   def update_car_controls(self, car_controls):
     """
     Send new instructions to the car; update its controls.
-    
+
     :param car_controls: airsim.CarControls() object
 
     :returns: nada
@@ -119,12 +119,12 @@ class AirSimEnv():
 
     :param client: airsim.CarClient() object that
     already connected to the sim
-    
+
     :returns: nada
     """
     # pitch, roll, yaw ; each is in radians where
     # 15 degrees = 0.261799 (don't ask me why they used radians...)
-    # NOTE: these images are reflected over a vertical line: left in the image
+    # NOTE: these images are reflected over line x = 0: left in the image
     # is actually right in the simulation...should be ok for CNN since it is
     # spatially invariant, but if not, then come back and change these
     self.client.simSetCameraOrientation(self.left_cam_name,
@@ -145,7 +145,7 @@ class AirSimEnv():
     :param client: airsim.CarClient() object that has already connected to the simulation
     :param cam_names: list of camera names, order of list is order in which requests will
     be made and (presumably) returned
-    
+
     :returns: list where each element is an airsim.ImageResponse() obj
     """
     # build list of airsim.ImageRequest objects to give to client.simGetImages()
@@ -170,7 +170,7 @@ class AirSimEnv():
     :param cam_names: names of the cameras from which the image request objs
     were gotten; order of this names in cam_names is ASSUMED to be the same
     order in sim_img_responses
-    
+
     :returns: 2D, 4 channel numpy array of all images "stitched" together as:
     left forward right back  (NOTE: not sure where to put back img).
 
@@ -179,15 +179,11 @@ class AirSimEnv():
     """
     # extract the 1D  RGBA binary uint8 string images into 2D,
     # 4 channel images; append that image to a list
-
-    # order of these names is order images will be concatenated
-    # together (from left to right)
-    
     dict_of_2D_imgs = {}
 
     height = sim_img_responses[0].height
     width = sim_img_responses[0].width
-    
+
     for cam_name, sim_img_response in zip(cam_names, sim_img_responses):
       # get a flat, 1D array of the iamge
       img_1D = np.fromstring(sim_img_response.image_data_uint8, dtype=np.uint8)
@@ -202,9 +198,9 @@ class AirSimEnv():
       # image is flipped or not, so no need to unflip it
       img_2D_RGBA = img_1D.reshape(height, width, 4)
 
-      
+
       dict_of_2D_imgs.update({ cam_name : img_2D_RGBA})
-      
+
     # customized to get a panoramic image w/ given camera orientations
     composite_img = np.concatenate([ dict_of_2D_imgs[cam_names[3]][:, int((2*width/5))::],
                                      dict_of_2D_imgs[cam_names[0]][:,int((2*width/5))::],
@@ -240,8 +236,8 @@ class AirSimEnv():
 
   def unfreeze_sim(self):
     self.client.simPause(False)
-    
-  
+
+
 
 class DriverAgent():
   """
@@ -250,27 +246,26 @@ class DriverAgent():
   """
   def __init__(self, num_steering_angles, replay_memory_size,
                mini_batch_size=64, gamma=0.98):
-    """
-    
-    """
+
     # state_t, action_t, reward_t, state_t+1
-    self.replay_memory = [ (np.empty(INPUT_SHAPE, dtype=np.uint8),
+    self.replay_memory = [ (np.empty(IMG_SHAPE, dtype=np.uint8),
                             0.0,
                             0.0,
-                            np.empty(INPUT_SHAPE, dtype=np.uint8)) ] * replay_memory_size
+                            np.empty(IMG_SHAPE, dtype=np.uint8)) ] * replay_memory_size
 
     self.replay_memory_size = replay_memory_size
     self.next_replay_memory_insert_idx = 0
     self.num_steering_angles = num_steering_angles
-    
+
+    # airsim steering angles are in the interval [-1, 1] for some reason
     self.action_space = np.arange(-1.0, 1.001, 2.0/num_steering_angles)
-    
+
     self.mini_batch_size = mini_batch_size
     self.gamma = gamma
 
     # neural network to approximate the policy/Q function
     self.online_Q = Sequential()
-    self.online_Q.add(Convolution2D(128, kernel_size=32, strides=28, input_shape=INPUT_SHAPE,
+    self.online_Q.add(Convolution2D(128, kernel_size=32, strides=28, input_shape=IMG_SHAPE,
                                  data_format='channels_last'))
     self.online_Q.add(Activation('relu'))
     self.online_Q.add(MaxPooling2D(pool_size=8, strides=8))
@@ -279,31 +274,38 @@ class DriverAgent():
     self.online_Q.add(Activation('relu'))
     self.online_Q.add(Dense(num_steering_angles))  # 1 output per steering angle
     self.online_Q.add(Activation('linear'))
-    
-    self.online_Q.compile(optimizer='adam', metric='mse') # used for selecting actions -- copies weights from offline
+
+    # can only use MSE when have 1 output?
     self.offline_Q = self.online_Q # target network -- used to update weights
-
-
-  def reward(self, car_state):
-    """ :param car_state: airsim.CarState() of car in sim"""
-    
-    if car_state.collisions.has_collided is True:
-      # collisions attrib has object_id (collided w/), so
-      # very easily could modify and see if collided with person
-      # or vehicle or building or curb or etc. 
-      return -1.0
-    else:
-      return 0.5
-
+    self.offline_Q.compile(optimizer='adam', loss='mse')
+    self.online_Q.compile(optimizer='adam', loss='mse') # used for selecting actions -- copies weights from offline
 
   def mini_batch_sample(self):
-    """ get a random chunk of (state, action, reward, state+1) tuples """
+    """
+    Get a random chunk of (state, action, reward, state+1) tuples
+    """
     idx_before_could_seg_fault = self.replay_memory_size - self.mini_batch_size-1
     start_idx = random.randint(0, idx_before_could_seg_fault)
     end_idx = start_idx + (self.mini_batch_size-1)
 
     return self.replay_memory[start_idx:end_idx]
 
+  def current_reward(self, car_state):
+    """
+    Custom reward function
+
+    :param car_state: airsim.CarState() of car in sim
+    """
+    if car_state.collisions.has_collided is True:
+      # collisions attrib has object_id (collided w/), so
+      # very easily could modify and see if collided with person
+      # or vehicle or building or curb or etc.
+      return -1.0
+    else:
+      return 0.5
+
+  def loss(self, rewards, Q_t_plus_1s, Q_ts):
+      return ((current_reward + self.gamma * target) - prediction)**2
 
   def train(self):
     """
@@ -312,15 +314,34 @@ class DriverAgent():
     mini_batch_of_quadruples = self.mini_batch_sample()
     # this is the confusing part of the algorithm
     # experience replay is how "future" rewards are used;
-    # not literally the future, just the future relative to 1st sample in batch
+    # not literally the future, just the future relative to 1st sample in batch?
 
-    # training the online Q, btw; offline Q produces targets
+    Q_targets = []
+    for reward_t, Q_t_plus_1 in zip(mini_batch_of_quadruples[:][2],
+                                    self.offline_Q.predict(mini_batch_of_quadruples[:][3]) ):
+      Q_targets.append(reward_t + self.gamma * Q_t_plus_1)
+
+    # fit
+    self.online_Q.fit(mini_batch_of_quadruples[:][0], Q_targets, epochs=1,
+                      shuffle=False)
+
     """
-Sample rand
-Set
-Perform
-in Algorithm 1
-"""
+    What i don't understand is, in the paper, the gradient descent step is
+    on (yj - Q(...))^2.
+    Is it making the assumption that the same value would be predicted by
+    both the target and the online network? If so then that seems ridiculous.
+    """
+
+  def copy_online_weights_to_offline(self):
+      self.offline_Q.set_weights(self.online_Q.get_weights())
+
+
+  def save_weights(self, offline=True):
+    """
+    Save the model weights to h5 file that can be loaded in to the model
+    should the program crash
+    """
+    pass
 
   def get_steering_angle(self, state):
     """
@@ -335,12 +356,10 @@ in Algorithm 1
     # get idx of largest Q val then go to idx in action space get steer angle
     return self.action_space[self.action_np.argmax(self.online_Q.predict(state))]
 
-
   def get_random_steering_angle(self):
     self.action_space[random.randint(0, self.num_steering_angles-1)]
 
-
-  def remember(self, quadruple)
+  def remember(self, quadruple):
     """
     Add this state_t, action_t, reward_t, state_t+1 quadruple to
     replay memory.
@@ -351,7 +370,7 @@ in Algorithm 1
     """
     self.replay_memory[self.next_replay_memory_insert_idx] = quadruple
     self.next_replay_memory_insert_idx = (self.next_replay_memory_insert_idx+1)\
-                                         % self.replay_memory_size 
+                                         % self.replay_memory_size
 
 
 # thank you: https://leonardoaraujosantos.gitbooks.io/artificial-inteligence/content/deep_q_learning.html
@@ -363,7 +382,12 @@ def init_car_controls():
   car_controls.manual_gear = 1  # should constrain speed
 
   return car_controls
-  
+
+
+
+
+
+
 
 print('Getting ready')
 car_controls = init_car_controls()
@@ -386,7 +410,7 @@ airsim_env.freeze()  # freeze until enter loops
 for episode_num in range(num_episodes):
   print('Starting episode {]'.format(episode_num+1))
   airsim_env.normal_reset()
-  
+
   #  decay that epsilon value by const val
   if episode_num > 0:
     epsilon -= episodic_epsilon_linear_decay_amount
@@ -402,10 +426,11 @@ for episode_num in range(num_episodes):
     # if car is starting to fall into oblivion
     if car_state_t.kinematics_estimated.position.z_val > -0.6:
       airsim_env.emergency_reset()
-      
+
     state_t = airsim_env.get_environment_state() # panoramic image
 
     airsim_env.freeze()  # freeze to select steering angle
+
     # Action t
     # if roll for random steering angle w/ probability epsilon
     if random.random() < epsilon:
@@ -419,7 +444,7 @@ for episode_num in range(num_episodes):
     airsim_env.unfreeze()  # unfreeze to issue steering angle
     airsim_env.update_car_controls(car_controls)
 
-    # Reward t 
+    # Reward t
     time.sleep(reward_delay)  # wait for instructions to execute
 
     # State t+1
@@ -427,7 +452,8 @@ for episode_num in range(num_episodes):
     state_t_plus_1 = airsim_env.get_environment_state()
 
     airsim_env.freeze()  # freeze to do training stuff
-    
+
+    reward_t = driver_agent.current_reward()
     driver_agent.remember( (state_t,
                             action_t,
                             reward_t,
@@ -435,13 +461,13 @@ for episode_num in range(num_episodes):
 
     driver_agent.train()
 
-    if (time_step + episode_length*num_episodes) % c == 0:
-      # copy online weight to offline, target network
+    if (time_step + episode_length*num_episodes) % C == 0:
+        driver_agent.copy_online_weights_to_offline()
 
   # END inner for
 # END OUTER for
 
-    
+
 """
 clone net Q to obtain target Q' and use Q' for
 generating the Q learning targets yj for the following C updates to Q
