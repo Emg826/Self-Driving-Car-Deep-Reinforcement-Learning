@@ -53,10 +53,10 @@ import os
 import random
 
 from keras.models import Sequential
-from keras.layers import Convolution2D, Activation, Flatten, Dense, MaxPooling2D
+from keras.layers import Convolution2D, Flatten, Dense, MaxPooling2D
 from keras.optimizers import Adam # usually is pretty fast
 
-IMG_SHAPE = (1190, 260, 4) # W x H x NUM_CHANNELS
+IMG_SHAPE = (260, 1190,  4) # H x W x NUM_CHANNELS
 random.seed(3)
 
 class AirSimEnv():
@@ -90,7 +90,8 @@ class AirSimEnv():
                  self.right_cam_name,
                  self.backward_cam_name]
     sim_img_responses = self.request_all_4_sim_images(cam_names)
-    return self.make_composite_image_from_responses(sim_img_responses)
+    return self.make_composite_image_from_responses(sim_img_responses,
+                                                    cam_names)
 
   def get_car_state(self):
     """
@@ -110,7 +111,7 @@ class AirSimEnv():
 
     :returns: nada
     """
-    return client.setCarControls(car_controls)
+    return self.client.setCarControls(car_controls)
 
   def setup_my_cameras(self, client):
     """
@@ -228,8 +229,8 @@ class AirSimEnv():
     Pauses the simulation before resetting the vehicle.
     """
     self.client.simPause(True)
-    self.reset()
-    self.simPause(False)
+    self.client.reset()
+    self.client.simPause(False)
 
   def freeze_sim(self):
     self.client.simPause(True)
@@ -245,7 +246,7 @@ class DriverAgent():
   deep Q learning.
   """
   def __init__(self, num_steering_angles, replay_memory_size,
-               mini_batch_size=64, gamma=0.98):
+               mini_batch_size=32, gamma=0.98):
 
     # state_t, action_t, reward_t, state_t+1
     self.replay_memory = [ (np.empty(IMG_SHAPE, dtype=np.uint8),
@@ -265,15 +266,12 @@ class DriverAgent():
 
     # neural network to approximate the policy/Q function
     self.online_Q = Sequential()
-    self.online_Q.add(Convolution2D(128, kernel_size=32, strides=28, input_shape=IMG_SHAPE,
-                                 data_format='channels_last'))
-    self.online_Q.add(Activation('relu'))
-    self.online_Q.add(MaxPooling2D(pool_size=8, strides=8))
+    self.online_Q.add(Convolution2D(64, kernel_size=8, strides=8, input_shape=IMG_SHAPE,
+                                 data_format='channels_last', activation='relu'))
+    self.online_Q.add(MaxPooling2D(pool_size=4, strides=4))
     self.online_Q.add(Flatten())
-    self.online_Q.add(Dense(512))
-    self.online_Q.add(Activation('relu'))
+    self.online_Q.add(Dense(256, activation='relu'))
     self.online_Q.add(Dense(num_steering_angles))  # 1 output per steering angle
-    self.online_Q.add(Activation('linear'))
 
     # can only use MSE when have 1 output?
     self.offline_Q = self.online_Q # target network -- used to update weights
@@ -296,16 +294,13 @@ class DriverAgent():
 
     :param car_state: airsim.CarState() of car in sim
     """
-    if car_state.collisions.has_collided is True:
+    if car_state.collision.has_collided is True:
       # collisions attrib has object_id (collided w/), so
       # very easily could modify and see if collided with person
       # or vehicle or building or curb or etc.
       return -1.0
     else:
       return 0.5
-
-  def loss(self, rewards, Q_t_plus_1s, Q_ts):
-      return ((current_reward + self.gamma * target) - prediction)**2
 
   def train(self):
     """
@@ -316,14 +311,16 @@ class DriverAgent():
     # experience replay is how "future" rewards are used;
     # not literally the future, just the future relative to 1st sample in batch?
 
-    Q_targets = []
-    for reward_t, Q_t_plus_1 in zip(mini_batch_of_quadruples[:][2],
-                                    self.offline_Q.predict(mini_batch_of_quadruples[:][3]) ):
-      Q_targets.append(reward_t + self.gamma * Q_t_plus_1)
+    Q_targets = np.empty(self.mini_batch_size)
+    for _, action_t, reward_t, state_t_plus_1 in mini_batch_of_quadruples:
+      np.append(Q_targets,
+                reward_t + self.gamma * np.max(self.offline_Q.predict_on_batch(state_t_plus_1.reshape((1,)+IMG_SHAPE)))) # np.max by keras-rl/agents/dqn.py
 
+    print(Q_targets.shape)
+    states = np.array([quadruple[3] for quadruple in mini_batch_of_quadruples])
+    print(states.shape)
     # fit
-    self.online_Q.fit(mini_batch_of_quadruples[:][0], Q_targets, epochs=1,
-                      shuffle=False)
+    self.online_Q.fit(states, Q_targets, epochs=1, shuffle=False)
 
     """
     What i don't understand is, in the paper, the gradient descent step is
@@ -391,34 +388,40 @@ def init_car_controls():
 
 print('Getting ready')
 car_controls = init_car_controls()
-replay_memory_size = 1500 # units=num images
-episode_length = 2000
-assert episode_length > replay_memory_size
-num_episodes = 10
+replay_memory_size = 4 # units=num images
+episode_length = 5 # no idea what this means for fps
+assert episode_length > replay_memory_size  # for simplicity's sake; don't actually want this
+C = 32 # copy weights to offline target Q net every n time steps
+num_episodes = 100
 epsilon = 1.0  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
 num_steering_angles = 10
 reward_delay = 0.05 # seconds until know assign reward
 
+
 driver_agent = DriverAgent(num_steering_angles=num_steering_angles,
-                           replay_memory_size=replay_memory_size)
+                           replay_memory_size=replay_memory_size,
+                           mini_batch_size=3)
 airsim_env = AirSimEnv()
-airsim_env.freeze()  # freeze until enter loops
+airsim_env.freeze_sim()  # freeze until enter loops
 
 
 # for each episode (arbitrary length of time)
 for episode_num in range(num_episodes):
-  print('Starting episode {]'.format(episode_num+1))
+  print('Starting episode {}'.format(episode_num+1))
   airsim_env.normal_reset()
 
   #  decay that epsilon value by const val
   if episode_num > 0:
+    if episode_num == 1:
+      epsilon = 0.55
+      
     epsilon -= episodic_epsilon_linear_decay_amount
 
   # for each time step
   for t in range(1, episode_length+1):
     print('\t time step {}'.format(t))
-    airsim_env.unfreeze()   # unfreeze for init loop or after previous step
+    airsim_env.unfreeze_sim()   # unfreeze for init loop or after previous step
 
     # Observation t
     car_state_t = airsim_env.get_car_state()
@@ -429,7 +432,7 @@ for episode_num in range(num_episodes):
 
     state_t = airsim_env.get_environment_state() # panoramic image
 
-    airsim_env.freeze()  # freeze to select steering angle
+    airsim_env.freeze_sim()  # freeze to select steering angle
 
     # Action t
     # if roll for random steering angle w/ probability epsilon
@@ -441,7 +444,7 @@ for episode_num in range(num_episodes):
 
     car_controls.steering_angle = action_t
 
-    airsim_env.unfreeze()  # unfreeze to issue steering angle
+    airsim_env.unfreeze_sim()  # unfreeze to issue steering angle
     airsim_env.update_car_controls(car_controls)
 
     # Reward t
@@ -451,17 +454,19 @@ for episode_num in range(num_episodes):
     car_state_t_plus_1 = airsim_env.get_car_state()
     state_t_plus_1 = airsim_env.get_environment_state()
 
-    airsim_env.freeze()  # freeze to do training stuff
+    airsim_env.freeze_sim()  # freeze to do training stuff
 
-    reward_t = driver_agent.current_reward()
+    reward_t = driver_agent.current_reward(car_state_t_plus_1)
     driver_agent.remember( (state_t,
                             action_t,
                             reward_t,
                             state_t_plus_1) )
 
-    driver_agent.train()
+    # only train and/or copy weights after the 1st episode
+    if episode_num > 0: 
+      driver_agent.train()
 
-    if (time_step + episode_length*num_episodes) % C == 0:
+      if (t + episode_length*num_episodes) % C == 0:
         driver_agent.copy_online_weights_to_offline()
 
   # END inner for
