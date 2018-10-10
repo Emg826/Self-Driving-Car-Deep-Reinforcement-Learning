@@ -54,14 +54,14 @@ import time
 import os
 import random
 
+from keras import backend as K
 from keras.models import Sequential
 from keras.layers import Convolution2D, Flatten, Dense, MaxPooling2D
-from keras.optimizers import RMSProp # just because the DeepMind paper used this
-import tensorflow as tf
 #https://web.stanford.edu/class/cs20si/2017/lectures/slides_14.pdf
 
 IMG_SHAPE = (260, 1190,  4) # H x W x NUM_CHANNELS
 random.seed(3)
+
 
 class AirSimEnv():
   """
@@ -80,7 +80,7 @@ class AirSimEnv():
     self.forward_cam_name = '0'
     self.backward_cam_name = '4'
 
-    self.setup_my_cameras(self.client)
+    self.setup_my_cameras()
 
   def get_environment_state(self):
     """
@@ -115,9 +115,9 @@ class AirSimEnv():
 
     :returns: nada
     """
-    return self.client.setCarControls(car_controls)
+    self.client.setCarControls(car_controls)
 
-  def setup_my_cameras(self, client):
+  def setup_my_cameras(self):
     """
     Helper function to set the left, right, forward, and back cameras up
     on the vehicle as I've see fit.
@@ -249,7 +249,7 @@ class DriverAgent():
   The driver of the vehicle, a deep Q network that uses
   deep Q learning.
   """
-  def __init__(self, num_steering_angles, replay_memory_size, optimizer,
+  def __init__(self, num_steering_angles, replay_memory_size,
                mini_batch_size=32, gamma=0.98, n_points_replay=3):
     """
     Initialize the Deep Q driving agent
@@ -291,19 +291,17 @@ class DriverAgent():
     self.online_Q.compile(optimizer='rmsprop', loss='mse') # used for selecting actions -- copies weights from offline
     # ^ optimizer and loss don't really matter since will be manually updating weights (not use model.fit())
 
-    self.optimizer = optimizer
-
   def mini_batch_sample(self):
     """
     Get a random chunk of self.mini_batch_size 4-tuples from replay memory,
     each of the form (state_t, action_t, reward_t, state_t+1).
     """
     # sampling doesn't "wrap around" (e.g., idx's 31, 0, 1 ...); can do later
-    idx_before_could_seg_fault = self.replay_memory_size - self.mini_batch_size-1
+    idx_before_could_seg_fault = self.replay_memory_size - self.mini_batch_size
     start_idx = random.randint(0, idx_before_could_seg_fault)
     end_idx = start_idx + (self.mini_batch_size-1)
 
-    return self.replay_memory[start_idx:end_idx]
+    return self.replay_memory[start_idx:(end_idx+1)]
 
   def current_reward(self, car_state):
     """
@@ -357,9 +355,16 @@ class DriverAgent():
     # note: did not rescale rewards in min,max range
     # step 3. gradient descent on error^2 w/ rspct to online weights
     delta = [target - prediction for target, prediction in zip(targets, predictions)]
+    return None # don't use this func
 
-  def train_lua_way(self):
-    """Tried to keep it consistent with the DQN Lua code on DeepMind's github"""
+
+  def my_train_with_keras(self):
+    """
+    This is my attempt to combine python's Keras and the lua code
+    from DeepMind's github that contains the deep q network code.
+    The hard part of that code is manually applying the gradients,
+    but I think Keras should be able to handle that.
+    """
     mini_batch = self.mini_batch_sample()
 
     # this format is standard and expected throughout this program
@@ -371,15 +376,21 @@ class DriverAgent():
     # delta = r + (1-terminal) * gamma * max_a Q^(s2, a) - Q(s, a)
     # list of terminal/not terminal step
     term = [1 if s2 is None else 0 for state in s2] # not what they do, but get same result later
-    
+
+    # need to do this, else will give Q net None objects if have terminal quadruples
+    for idx, elem in enumerate(s2):
+      if elem is None:
+        s2[idx] = s[idx]
+        
     # get max q values from offline predictions: -- Compute max_a Q(s_2, a).
-    batch_of_q_vectors = self.offline_Q.predict_batch(s2)
+
+    batch_of_q_vectors = self.offline_Q.predict(np.asarray(s2))
     q2_max = [np.max(q_vector) for q_vector in batch_of_q_vectors] # action decided in past, so don't care here
 
     # -- Compute q2 = (1-terminal) * gamma * max_a Q^(s2, a)
     q2 = [(1-term_val)*self.gamma * q_val for q_val, term_val in zip(q2_max, term)]
 
-    delta = r[:] # deep copy since just a list of floats?
+    delta = r[:]
 
     # rescale r's if you want to, but i won't
     delta = [r1_val + q2_val for r1_val, q2_val in zip(r, q2)]
@@ -387,13 +398,13 @@ class DriverAgent():
 
     # now get the online Q's, the predicteds
     # q = Q(s, a)
-    q_all = self.online_Q.predict_batch(s) # mini_batch_size x num_steering angles
-    q = [0.0] * q_all # mini_batch_size x 1
+    q_all = self.online_Q.predict(np.asarray(s)) # mini_batch_size x num_steering angles
+    q = [0.0] * self.mini_batch_size # mini_batch_size x 1
     
     for i_th_timestep in range(len(q_all)):  # note: i think lua uses 1 as 1st idx
       # get just predicted q val for action that was chosen in past
       # self.action_space.index(a[i_th_timestep]) returns an idx (0 to num_steering_angels-1)
-      q[i_th_timestep] = q_all[i_th_timestep][self.action_space.index(a[i_th_timestep])]
+      q[i_th_timestep] = q_all[i_th_timestep][a[i_th_timestep][0]]
 
     # now list of r + (1-terminal) * gamma * max_a Q^(s2, a) - Q(s, a) 
     delta = [target - predicted for target, predicted in zip(delta, q)]
@@ -401,28 +412,20 @@ class DriverAgent():
     # can clip delta between -1 and 1 here; i'm not going to, for now.
 
     # every action's q val (aside from that of action taken) is 0 since didn't do
-    targets = np.zeros((self.mini_batch_size, self.num_steering_angles))
+    targets = np.zeros((self.mini_batch_size, self.num_steering_angles), dtype=np.float)
+    
     for i_th_timestep in range(self.mini_batch_size):
-      targets[i_th_timestep][self.action_space.index(a[i_th_timestep])] = delta[i_th_timestep]
+      targets[i_th_timestep][a[i_th_timestep][0]] = delta[i_th_timestep]
 
-    # return targets, delta, q2_max, i.e., end of function nql:getQUpdate(args)
+    self.online_Q.fit(np.asarray(s), targets, shuffle=False, verbose=0)
 
-    # now have to do stuff in function nql:qLearnMinibatch()
-
-
-    
-    
-    
-
-    
-    
 
   def copy_online_weights_to_offline(self):
     """
     Copy online network's weights to offline network. Occurs every
     C time steps (C is not an attribute of this class [though it could be later])
     """
-    self.offline_Q.set_weights() = self.online_Q.get_weights()
+    self.offline_Q.set_weights(self.online_Q.get_weights())
 
   def save_weights(self, save_offline_weigths=True):
     """
@@ -432,10 +435,12 @@ class DriverAgent():
     pass
 
   def get_random_steering_angle(self):
-    self.action_space[random.randint(0, self.num_steering_angles-1)]
+    action_idx = random.randint(0, self.num_steering_angles-1)
+    return (action_idx, self.action_space[action_idx])
 
   def get_steering_angle(self, state_t):
-    return self.action_space[np.argmax(self.online_Q.predict(state_t))]
+    action_idx = np.argmax(self.online_Q.predict(state_t.reshape((1,)+IMG_SHAPE)))
+    return (action_idx, self.action_space[action_idx])
 
   def remember(self, quadruple):
     """
@@ -463,16 +468,12 @@ def init_car_controls():
 
 
 
-
-
-
-
 print('Getting ready')
 car_controls = init_car_controls()
-replay_memory_size = 12 # units=num images
-episode_length = 15 # no idea what this means for fps
+replay_memory_size = 60 # units=num images
+episode_length = 80 # no idea what this means for fps
 assert episode_length > replay_memory_size  # for simplicity's sake; don't actually want this
-C = 32 # copy weights to offline target Q net every n time steps
+C = 60 # copy weights to offline target Q net every n time steps
 num_episodes = 100
 epsilon = 1.0  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
@@ -482,7 +483,6 @@ reward_delay = 0.05 # seconds until know assign reward
 
 driver_agent = DriverAgent(num_steering_angles=num_steering_angles,
                            replay_memory_size=replay_memory_size,
-                           optimizer=RMSProp(),
                            mini_batch_size=3,
                            gamma=0.98)
 airsim_env = AirSimEnv()
@@ -521,12 +521,15 @@ for episode_num in range(num_episodes):
     # if roll for random steering angle w/ probability epsilon
     if random.random() < epsilon:
       action_t = driver_agent.get_random_steering_angle()
+      print('\t Random Steering angle: {}'.format(action_t[1]))
     # else, consult the policy/Q network
     else:
       action_t = driver_agent.get_steering_angle(state_t)
+      print('\t DQN Steering angle: {}'.format(action_t[1]))
 
-    car_controls.steering_angle = action_t
-
+    
+    car_controls.steering = action_t[1] # 0 is idx, 1 is angle [-1, 1]
+    
     airsim_env.unfreeze_sim()  # unfreeze to issue steering angle
     airsim_env.update_car_controls(car_controls)
 
@@ -552,7 +555,7 @@ for episode_num in range(num_episodes):
     # only train and/or copy weights after the 1st episode
     iteration_count = t + episode_length*episode_num
     if episode_num > 0: 
-      driver_agent.train()
+      driver_agent.my_train_with_keras()
 
       if iteration_count % C == 0:
         driver_agent.copy_online_weights_to_offline()
