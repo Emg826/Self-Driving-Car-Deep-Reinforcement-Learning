@@ -81,6 +81,9 @@ class AirSimEnv():
     self.backward_cam_name = '4'
 
     self.setup_my_cameras()
+    self.emergency_reset_coords = airsim.Vector3r(x_val=0,
+                                                  y_val=0,
+                                                  z_val=-0.7) # +x is fwd, +y is right, -z is up
 
   def get_environment_state(self):
     """
@@ -226,7 +229,10 @@ class AirSimEnv():
     through.
     """
     print('emergency reset triggered')
+
     self.client.reset()
+
+
 
   def normal_reset(self):
     """
@@ -427,12 +433,25 @@ class DriverAgent():
     """
     self.offline_Q.set_weights(self.online_Q.get_weights())
 
-  def save_weights(self, save_offline_weigths=True):
+  def save_weights(self, save_offline_weigths=False):
     """
     Save the model weights to h5 file that can be loaded in to a model
     with the exact same architecture model should the program crash
     """
-    pass
+    directory = '/model_weights'
+    if os.path.isdir(directory) is False:
+      os.mkdir(directory)
+
+    time_stamp = int(time.time())
+    if save_offline_weights:
+      offline_weight_filename = 'offline_{}.h5'.format(time_stamp)
+      self.offline_Q.save_weights(os.path.join(directory, offline_weight_filename))
+      print('Offline weights saved at {}'.format(time_stamp))
+
+    else:
+      online_weight_filename = 'online_{}.h5'.format(time_stamp)
+      self.online_Q.save_weights(os.path.join(directory, online_weight_filename))
+      print('Online weights saved at {}'.format(time_stamp))    
 
   def get_random_steering_angle(self):
     action_idx = random.randint(0, self.num_steering_angles-1)
@@ -459,7 +478,7 @@ class DriverAgent():
 # thank you: https://leonardoaraujosantos.gitbooks.io/artificial-inteligence/content/deep_q_learning.html
 def init_car_controls():
   car_controls = airsim.CarControls()
-  car_controls.throttle = 0.3
+  car_controls.throttle = 0.5
   car_controls.steering = 0.0
   car_controls.is_manual_gear = True
   car_controls.manual_gear = 1  # should constrain speed
@@ -473,7 +492,9 @@ car_controls = init_car_controls()
 replay_memory_size = 60 # units=num images
 episode_length = 80 # no idea what this means for fps
 assert episode_length > replay_memory_size  # for simplicity's sake; don't actually want this
-C = 60 # copy weights to offline target Q net every n time steps
+mini_batch_train_size = 4
+assert mini_batch_train_size <= replay_memory_size
+C = 30 # copy weights to offline target Q net every n time steps
 num_episodes = 100
 epsilon = 1.0  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
@@ -483,7 +504,7 @@ reward_delay = 0.05 # seconds until know assign reward
 
 driver_agent = DriverAgent(num_steering_angles=num_steering_angles,
                            replay_memory_size=replay_memory_size,
-                           mini_batch_size=3,
+                           mini_batch_size=mini_batch_train_size,
                            gamma=0.98)
 airsim_env = AirSimEnv()
 airsim_env.freeze_sim()  # freeze until enter loops
@@ -495,11 +516,7 @@ for episode_num in range(num_episodes):
   airsim_env.normal_reset()
 
   #  decay that epsilon value by const val
-  if episode_num > 0:
-    if episode_num == 1:
-      epsilon = 0.55
-      
-    epsilon -= episodic_epsilon_linear_decay_amount
+  epsilon -= episodic_epsilon_linear_decay_amount
 
   # for each time step
   for t in range(1, episode_length+1):
@@ -510,7 +527,7 @@ for episode_num in range(num_episodes):
     car_state_t = airsim_env.get_car_state()
 
     # if car is starting to fall into oblivion
-    if car_state_t.kinematics_estimated.position.z_val > -0.6:
+    if car_state_t.kinematics_estimated.position.z_val > -0.4:
       airsim_env.emergency_reset()
 
     state_t = airsim_env.get_environment_state() # panoramic image
@@ -534,7 +551,7 @@ for episode_num in range(num_episodes):
     airsim_env.update_car_controls(car_controls)
 
     # Reward t
-    time.sleep(reward_delay)  # wait for instructions to execute
+    # time.sleep(reward_delay)  # wait for instructions to execute
 
     # State t+1
     car_state_t_plus_1 = airsim_env.get_car_state()
