@@ -7,21 +7,13 @@ Therefore, the first goal is to get a deep reinforcement algorithm that can,
 at the very least, steer itself to avoid collisions. If the algorithm is
 able to accomplish this fairly quickly, lane keeping should be next.
 
-The second goal is to come up with a usable reward/penalty function. The
-intended function is (distance_since_last_infraction)^2 where infractions
-are things such as collisions and resets. Note: I'm not sure how to incorporate
-penalties (like hitting a pedestrian).
+The second goal is to come up with a usable reward/penalty function. 
 
 The third and last goal (for this file at least) is to just figure out how to
 use multiple simulation images with a deep Q network. This means learning how
-use multiple images and how to actually implement the deep Q network.
+to get multiple images and how to actually implement the deep Q network.
 
-The hope is that this will help to create a reward function and deep network
-that could be taken outside the simulation and continue learning. Therefore,
-I have to figure out how to take advantage of the simulation (e.g., it
-tracks collisions) and how to keep it as realistic as possible.
-
-Note*: this DQN agent does not stack frames like in the DeepMind paper
+Note*: my DQN driver agent does not stack frames like in DeepMind paper
 
 
 helpful for cams: https://github.com/Microsoft/AirSim/blob/master/docs/image_apis.md/#available-cameras
@@ -54,10 +46,8 @@ import time
 import os
 import random
 
-from keras import backend as K
 from keras.models import Sequential
 from keras.layers import Convolution2D, Flatten, Dense, MaxPooling2D
-#https://web.stanford.edu/class/cs20si/2017/lectures/slides_14.pdf
 
 IMG_SHAPE = (260, 1190,  4) # H x W x NUM_CHANNELS
 random.seed(3)
@@ -81,9 +71,8 @@ class AirSimEnv():
     self.backward_cam_name = '4'
 
     self.setup_my_cameras()
-    self.emergency_reset_coords = airsim.Vector3r(x_val=0,
-                                                  y_val=0,
-                                                  z_val=-0.7) # +x is fwd, +y is right, -z is up
+    # +x is fwd, +y is right, -z is up
+    self.emergency_reset_coords = airsim.Vector3r(x_val=0, y_val=0, z_val=-0.7) 
 
   def get_environment_state(self):
     """
@@ -220,34 +209,35 @@ class AirSimEnv():
     #airsim.write_png(os.path.normpath('sim_img'+ str(time.time())+'.png'), composite_img)
 
     return composite_img
-
-  def emergency_reset(self):
-    """
-    Does not bother to pause the car before resetting;
-    just tries to immediately reset. Good for when the car is
-    falling through the map and need to catch it before it falls
-    through.
-    """
-    print('emergency reset triggered')
-
-    self.client.reset()
-
-
-
-  def normal_reset(self):
-    """
-    Pauses the simulation before resetting the vehicle.
-    """
-    self.client.simPause(True)
-    self.client.reset()
-    self.client.simPause(False)
-
+  
   def freeze_sim(self):
     self.client.simPause(True)
 
   def unfreeze_sim(self):
     self.client.simPause(False)
-
+    
+  def emergency_reset(self):
+    """
+    Reset at emergency reset coords and scoot emergency respawn
+    coords back a little bit.
+    """
+    print('EMERGENCY RESET TRIGGERED!')
+    self.freeze_sim()
+    self.emergency_reset_coords.x_val = (self.emergency_reset_coords.x_val - 12) % -800
+    self.client.armDisarm(True)
+    self.client.reset()  # needed to make car stop rotating upon respawn
+    self.client.simSetVehiclePose(pose=airsim.Pose(position_val=self.emergency_reset_coords,
+                                                   orientation_val=airsim.Quaternionr(0,0,0,0)),
+                                  ignore_collison=True)
+    self.unfreeze_sim()                               
+                                                   
+  def normal_reset(self):
+    """
+    Pauses the simulation before resetting the vehicle.
+    """
+    self.freeze_sim()
+    self.client.reset()
+    self.unfreeze_sim()
 
 
 class DriverAgent():
@@ -256,58 +246,98 @@ class DriverAgent():
   deep Q learning.
   """
   def __init__(self, num_steering_angles, replay_memory_size,
-               mini_batch_size=32, gamma=0.98, n_points_replay=3):
+               mini_batch_size=32, gamma=0.98,
+               load_most_recent_weights=False,
+               specific_weights_filepath=None):
     """
     Initialize the Deep Q driving agent
     
     :param num_steering_angles: number of steering angles, equidistant from each other, in [-1, 1]
     :param replay_memory_size: number of previous states to remember, sample from this many states
-    :param optimizer: a keras.optimizer object w/ the class func get_updates()
     :param mini_batch_size: size of a batch to randomly sample from replaymemory
     :param gamma: discount rate of next reward (and determines all future rewards)
+    :param load_most_recent_weights: boolean; True if try to load most recent weights into networks
+    :param specific_weights_filepath: filepath (from curr. working dir.) to .h5 file of weights
     """
-    # prealloc replay mem of 4-tuples of the form: (state_t, action_t, reward_t, state_t+1)
-    self.replay_memory = [ (np.empty(IMG_SHAPE, dtype=np.uint8),
-                            0.0,
-                            0.0,
-                            np.empty(IMG_SHAPE, dtype=np.uint8)) ] * replay_memory_size
+    self.replay_memory = ReplayMemory(replay_memory_size=replay_memory_size,
+                                      mini_batch_size=mini_batch_size)
 
-    self.replay_memory_size = replay_memory_size
     self.mini_batch_size = mini_batch_size
     self.gamma = gamma
-    self.next_replay_memory_insert_idx = 0
     
     # airsim steering angles are in the interval [-1, 1] for some reason
     self.num_steering_angles = num_steering_angles
-    self.action_space = np.arange(-1.0, 1.001, 2.0/num_steering_angles).tolist()
+    self.action_space = np.linspace(-1.0, 1.0, num_steering_angles).tolist()
     # ^ is a list for because actions stored are steering angles, not ouput node idx
     # and lists have method .index(val_in_list) [used in training]
 
     # neural network to approximate the policy/Q function
     self.online_Q = Sequential()
-    self.online_Q.add(Convolution2D(64, kernel_size=8, strides=8, input_shape=IMG_SHAPE,
-                                 data_format='channels_last', activation='relu'))
-    self.online_Q.add(MaxPooling2D(pool_size=4, strides=4))
+    self.online_Q.add(Convolution2D(192, kernel_size=8, strides=6, input_shape=IMG_SHAPE,
+                                    data_format='channels_last', activation='relu'))
+    self.online_Q.add(Convolution2D(128, kernel_size=4, strides=4, activation='relu'))
+    self.online_Q.add(MaxPooling2D(pool_size=4, strides=2))
     self.online_Q.add(Flatten())
-    self.online_Q.add(Dense(256, activation='relu'))
+    self.online_Q.add(Dense(128, activation='relu'))  #relu = max{0, x}
+    self.online_Q.add(Dense(128, activation='relu'))  
     self.online_Q.add(Dense(num_steering_angles))  # 1 output per steering angle
 
     self.offline_Q = self.online_Q # target network -- used to update weights
     self.offline_Q.compile(optimizer='rmsprop', loss='mse')
     self.online_Q.compile(optimizer='rmsprop', loss='mse') # used for selecting actions -- copies weights from offline
-    # ^ optimizer and loss don't really matter since will be manually updating weights (not use model.fit())
 
-  def mini_batch_sample(self):
-    """
-    Get a random chunk of self.mini_batch_size 4-tuples from replay memory,
-    each of the form (state_t, action_t, reward_t, state_t+1).
-    """
-    # sampling doesn't "wrap around" (e.g., idx's 31, 0, 1 ...); can do later
-    idx_before_could_seg_fault = self.replay_memory_size - self.mini_batch_size
-    start_idx = random.randint(0, idx_before_could_seg_fault)
-    end_idx = start_idx + (self.mini_batch_size-1)
+    # try to load weights if there are any to load and want to load
+    self.weights_directory = os.path.join(os.getcwd(), 'deep_nn_collision_avoidance_weights')
+    if specific_weights_filepath is not None:
+      self.load_specific_weights_into_networks(filepath=specific_weights_filepath)
+    elif load_most_recent_weights is True:
+      self.load_most_recent_weights_into_networks()
+    
+  def load_specific_weights_into_networks(self, filepath):
+    try:
+      self.online_Q.load_weights(filepath)
+      self.offline_Q.load_weights(filepath)
+    except Error as e:
+      print(e)
+      print('Could not load these weights from {}. Will use random weights instead.'.format(filepath))
 
-    return self.replay_memory[start_idx:(end_idx+1)]
+  def load_most_recent_weights_into_networks(self):
+    """
+    Load weights that were saved by .save_weights() function
+    that Keras has. This should be a .h5 file located in the directory
+    self.weights_directory.
+    """
+    # make weights directory if not already there
+    if os.path.exists(self.weights_directory) is False:
+      os.mkdir(self.weights_directory)
+      print('Error: {} does not exist, so there are no weights to load.\n'
+            'Just made this directory now.\n'
+            'Using randomly initialized weights instead.\n'
+            'Will save this run\'s weights to this directory for next time.\n'.format(self.weights_directory))
+
+    # else directory exists
+    else:
+      # check if there are any files to load
+      list_of_files = os.listdir(self.weights_directory)
+        
+      if len(list_of_files) == 0:
+        print('No weight files to load in {}'.format(self.weights_directory))
+        return
+      else:
+        print(list_of_files)
+        list_of_files.sort()
+        file_name_of_weights = list_of_files[-1] # expect .h5 file
+
+        try:
+          self.online_Q.load_weights(os.path.join(self.weights_directory,
+                                                  file_name_of_weights))
+          self.offline_Q.load_weights(os.path.join(self.weights_directory,
+                                                   file_name_of_weights))
+        except Error as e:
+          print(e)
+          print('Could not load weights. Perhaps the network architectures do not match?')
+
+    
 
   def current_reward(self, car_state):
     """
@@ -327,53 +357,15 @@ class DriverAgent():
     else:
       return 0.5
 
-  def train(self):
-    """
-    Train on a minibatch of quadruples from replay memory.
-    """
-    # step 1. get a random minibatch from r memory
-    mini_batch = self.mini_batch_sample()
-
-    # step 2. get targets from offline and online Q predictions
-    # important note: term is just a 1 or a 0 (see lua code on deepmind github),
-    # which is just more efficient at calc target (no if-else) [i don't use term here]
-    targets = []
-    predictions = []
-    q_j_plus_1_maxes = []
-    for quadruple in mini_batch:
-      
-      s_j, a_j, r_j, s_j_plus_1 = quadruple
-
-      # if s_t is the last state in the episode
-      if s_j_plus_1 is None:  # (1 - terminal=1) = 0
-        targets.append(r_j)
-      # else, get a target Q from the offline network (target network)
-      else: # (1 - terminal=0) = 1
-        # parallel on github: delta = r:clone():float() and delta:add(q2)
-        q_j_plus_1_max = np.max(self.offline_Q.predict(s_j_plus_1))
-        q_j_plus_1_maxes.append(q_j_plus_1_max)
-        targets.append(r_j + self.gamma * q_j_plus_1_max)
-
-      # parallel on github: delta:add(-1, q)
-      # for whatever reason
-      predictions.append(self.online_Q.predict(s_j)[self.action_space.index(a_j)])
-
-    # note: did not rescale rewards in min,max range
-    # step 3. gradient descent on error^2 w/ rspct to online weights
-    delta = [target - prediction for target, prediction in zip(targets, predictions)]
-    return None # don't use this func
-
-
   def my_train_with_keras(self):
     """
     This is my attempt to combine python's Keras and the lua code
     from DeepMind's github that contains the deep q network code.
     The hard part of that code is manually applying the gradients,
-    but I think Keras should be able to handle that.
+    but I think Keras handles that when fit() is called.
     """
-    mini_batch = self.mini_batch_sample()
+    mini_batch = self.replay_memory.mini_batch_random_sample()
 
-    # this format is standard and expected throughout this program
     s = [quadruple[0] for quadruple in mini_batch]
     a = [quadruple[1] for quadruple in mini_batch]
     r = [quadruple[2] for quadruple in mini_batch]
@@ -406,7 +398,6 @@ class DriverAgent():
     # q = Q(s, a)
     q_all = self.online_Q.predict(np.asarray(s)) # mini_batch_size x num_steering angles
     q = [0.0] * self.mini_batch_size # mini_batch_size x 1
-    
     for i_th_timestep in range(len(q_all)):  # note: i think lua uses 1 as 1st idx
       # get just predicted q val for action that was chosen in past
       # self.action_space.index(a[i_th_timestep]) returns an idx (0 to num_steering_angels-1)
@@ -433,46 +424,87 @@ class DriverAgent():
     """
     self.offline_Q.set_weights(self.online_Q.get_weights())
 
-  def save_weights(self, save_offline_weigths=False):
+  def save_weights(self):
     """
     Save the model weights to h5 file that can be loaded in to a model
     with the exact same architecture model should the program crash
     """
-    directory = '/model_weights'
-    if os.path.isdir(directory) is False:
-      os.mkdir(directory)
-
     time_stamp = int(time.time())
-    if save_offline_weights:
-      offline_weight_filename = 'offline_{}.h5'.format(time_stamp)
-      self.offline_Q.save_weights(os.path.join(directory, offline_weight_filename))
-      print('Offline weights saved at {}'.format(time_stamp))
+    weights_filename = '{}.h5'.format(time_stamp)
+    self.offline_Q.save_weights(os.path.join(self.weights_directory,
+                                                 weights_filename))
+    print('Weights saved at {}s in file {}'.format(time_stamp, weights_filename))
 
-    else:
-      online_weight_filename = 'online_{}.h5'.format(time_stamp)
-      self.online_Q.save_weights(os.path.join(directory, online_weight_filename))
-      print('Online weights saved at {}'.format(time_stamp))    
 
   def get_random_steering_angle(self):
     action_idx = random.randint(0, self.num_steering_angles-1)
     return (action_idx, self.action_space[action_idx])
 
-  def get_steering_angle(self, state_t):
+  def get_network_steering_angle(self, state_t):
     action_idx = np.argmax(self.online_Q.predict(state_t.reshape((1,)+IMG_SHAPE)))
     return (action_idx, self.action_space[action_idx])
 
   def remember(self, quadruple):
     """
-    Add this state_t, action_t, reward_t, state_t+1 quadruple to
-    replay memory.
+    Add this state_t, (action_t_idx, action_t_angle), reward_t, state_t+1
+    quadruple to replay memory.
 
     :param quadruple: state_t, action_t, reward_t, state_t+1 quadruple
 
     :returns: nada
     """
-    self.replay_memory[self.next_replay_memory_insert_idx] = quadruple
-    self.next_replay_memory_insert_idx = (self.next_replay_memory_insert_idx+1)\
-                                         % self.replay_memory_size
+    self.replay_memory.remember(quadruple)
+
+    
+class ReplayMemory():
+  """
+  This class stores and handles all interactions with
+  the quadruples of the form: (state_t,
+                               (action_t_idx, action_t_steering),
+                               reward_t,
+                               state_t_plus_1)
+  """
+  def __init__(self, replay_memory_size=10**3, mini_batch_size=16):
+    self.replay_memory = [ (np.empty(IMG_SHAPE, dtype=np.uint8),
+                           (0, 0.0),
+                           0.0,
+                           np.empty(IMG_SHAPE, dtype=np.uint8)) ] * replay_memory_size
+    self.replay_memory_size = replay_memory_size
+    self.mini_batch_size = mini_batch_size
+    self.idx_of_last_insert = -1
+    self.num_memories = 0  # num memories over lifetime; not necess. num memories in mem 
+
+  def remember(self, quadruple):
+    self.idx_of_last_insert = (self.idx_of_last_insert + 1) % self.replay_memory_size
+    self.replay_memory[self.idx_of_last_insert] = quadruple
+    self.num_memories += 1
+
+  def mini_batch_random_sample(self):
+    """
+    Randomly sample a batch quadruples from memory.
+    """
+    # get indices to sample
+    if self.num_memories >= self.replay_memory_size:
+      start_idx = random.randint(0, (self.replay_memory_size-1))
+      end_idx = (start_idx + self.mini_batch_size - 1) % self.replay_memory_size
+       # return those quadruples in that range of indices
+      if start_idx > end_idx: # if sample wraps around from end to front of list
+        return self.replay_memory[start_idx:] + self.replay_memory[0:(end_idx+1)]
+
+      else: # can just sample normally
+        return self.replay_memory[start_idx:(end_idx+1)]
+
+      
+    else:
+      start_idx = random.randint(0, self.num_memories)
+      end_idx = (start_idx + self.mini_batch_size - 1) % self.num_memories
+
+      # return those quadruples in that range of indices
+      if start_idx > end_idx: # if sample wraps around from end to front of list
+        return self.replay_memory[start_idx:self.num_memories] + self.replay_memory[0:(end_idx+1)]
+
+      else: # can just sample normally
+        return self.replay_memory[start_idx:(end_idx+1)]
 
 
 # thank you: https://leonardoaraujosantos.gitbooks.io/artificial-inteligence/content/deep_q_learning.html
@@ -486,36 +518,45 @@ def init_car_controls():
   return car_controls
 
 
-
 print('Getting ready')
 car_controls = init_car_controls()
-replay_memory_size = 60 # units=num images
-episode_length = 80 # no idea what this means for fps
-assert episode_length > replay_memory_size  # for simplicity's sake; don't actually want this
-mini_batch_train_size = 4
+replay_memory_size = 1024 # units=num images
+episode_length = 256 # \neq to fps; fps depends on hardware
+mini_batch_train_size = 32
 assert mini_batch_train_size <= replay_memory_size
-C = 30 # copy weights to offline target Q net every n time steps
-num_episodes = 100
+C = 128 # copy weights to offline target Q net every n time steps
+num_episodes = 20
 epsilon = 1.0  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
 num_steering_angles = 10
 reward_delay = 0.05 # seconds until know assign reward
 
-
+print('On a perfect comptuer, the given settings indicate that each of the {} episodes '
+      'should last about {} seconds ({} seconds in total)'.format(num_episodes,
+                                                                  reward_delay*episode_length,
+                                                                  reward_delay*episode_length*num_episodes))
+                                                                  
+                                                                  
+                                                                  
+      
 driver_agent = DriverAgent(num_steering_angles=num_steering_angles,
                            replay_memory_size=replay_memory_size,
                            mini_batch_size=mini_batch_train_size,
-                           gamma=0.98)
+                           gamma=0.98,
+                           load_most_recent_weights=True)
 airsim_env = AirSimEnv()
 airsim_env.freeze_sim()  # freeze until enter loops
 
 
-# for each episode (arbitrary length of time)
+# for each episode
+epsilon += episodic_epsilon_linear_decay_amount # so that 1st episode uses epsilon 
 for episode_num in range(num_episodes):
   print('Starting episode {}'.format(episode_num+1))
+  print('{} seconds (roughly) until all episodes finish'.format((num_episodes-episode_num)*reward_delay))
   airsim_env.normal_reset()
 
   #  decay that epsilon value by const val
+  
   epsilon -= episodic_epsilon_linear_decay_amount
 
   # for each time step
@@ -526,8 +567,10 @@ for episode_num in range(num_episodes):
     # Observation t
     car_state_t = airsim_env.get_car_state()
 
-    # if car is starting to fall into oblivion
-    if car_state_t.kinematics_estimated.position.z_val > -0.4:
+    # if car is starting to fall into oblivion or
+    # was hit and is spinning out of control
+    if car_state_t.kinematics_estimated.position.z_val > -0.5125 or \
+       abs(car_state_t.kinematics_estimated.orientation.y_val) > 0.3125 or car_state_t.speed > 30.0: #kind-of works; 1.0 is upside down; m/s
       airsim_env.emergency_reset()
 
     state_t = airsim_env.get_environment_state() # panoramic image
@@ -536,12 +579,12 @@ for episode_num in range(num_episodes):
 
     # Action t
     # if roll for random steering angle w/ probability epsilon
-    if random.random() < epsilon:
+    if random.random() <= epsilon:
       action_t = driver_agent.get_random_steering_angle()
       print('\t Random Steering angle: {}'.format(action_t[1]))
     # else, consult the policy/Q network
     else:
-      action_t = driver_agent.get_steering_angle(state_t)
+      action_t = driver_agent.get_network_steering_angle(state_t)
       print('\t DQN Steering angle: {}'.format(action_t[1]))
 
     
@@ -551,7 +594,7 @@ for episode_num in range(num_episodes):
     airsim_env.update_car_controls(car_controls)
 
     # Reward t
-    # time.sleep(reward_delay)  # wait for instructions to execute
+    time.sleep(reward_delay)  # wait for instructions to execute
 
     # State t+1
     car_state_t_plus_1 = airsim_env.get_car_state()
@@ -574,8 +617,9 @@ for episode_num in range(num_episodes):
     if episode_num > 0: 
       driver_agent.my_train_with_keras()
 
-      if iteration_count % C == 0:
-        driver_agent.copy_online_weights_to_offline()
+    if iteration_count % C == 0:
+      driver_agent.copy_online_weights_to_offline()
+      driver_agent.save_weights() 
 
   # END inner for
 # END OUTER for
