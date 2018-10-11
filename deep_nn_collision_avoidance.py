@@ -1,11 +1,10 @@
 """
 The purpose of this file is to create a deep reinforcement learning
-system to control the steering ONLY. The throttle will be applied such
-that the maintained speed is 25 mph.
+system to control the steering ONLY. The car will be kept in 1st gear
+to restrain the speed.
 
 Therefore, the first goal is to get a deep reinforcement algorithm that can,
-at the very least, steer itself to avoid collisions. If the algorithm is
-able to accomplish this fairly quickly, lane keeping should be next.
+at the very least, steer itself to avoid collisions.
 
 The second goal is to come up with a usable reward/penalty function. 
 
@@ -552,7 +551,7 @@ airsim_env.freeze_sim()  # freeze until enter loops
 epsilon += episodic_epsilon_linear_decay_amount # so that 1st episode uses epsilon 
 for episode_num in range(num_episodes):
   print('Starting episode {}'.format(episode_num+1))
-  print('{} seconds (roughly) until all episodes finish'.format((num_episodes-episode_num)*reward_delay))
+  print('{} seconds (roughly) until all episodes finish'.format((num_episodes-episode_num)*episode_length*reward_delay))
   airsim_env.normal_reset()
 
   #  decay that epsilon value by const val
@@ -570,7 +569,7 @@ for episode_num in range(num_episodes):
     # if car is starting to fall into oblivion or
     # was hit and is spinning out of control
     if car_state_t.kinematics_estimated.position.z_val > -0.5125 or \
-       abs(car_state_t.kinematics_estimated.orientation.y_val) > 0.3125 or car_state_t.speed > 30.0: #kind-of works; 1.0 is upside down; m/s
+       abs(car_state_t.kinematics_estimated.orientation.y_val) > 0.3125 or car_state_t.speed > 40.0: #kind-of works; 1.0 is upside down; m/s
       airsim_env.emergency_reset()
 
     state_t = airsim_env.get_environment_state() # panoramic image
