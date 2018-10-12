@@ -73,13 +73,13 @@ class AirSimEnv():
     # i just drove around and hit ';' and found the vectors and
     # quaternions of those locations
     self.emergency_reset_poses = [airsim.Pose(airsim.Vector3r(46,-530,-.7),
-                                              airsim.Quaternionr(0,.01,1.02,0)),
+                                              airsim.Quaternionr(0,0,.01,1.02)),
                                   airsim.Pose(airsim.Vector3r(320,-18,-.7),
-                                              airsim.Quaternionr(0,1.0, .01,0)),
+                                              airsim.Quaternionr(0,0,1.0,.01)),
                                   airsim.Pose(airsim.Vector3r(229,-313,-.7),
-                                              airsim.Quaternionr(0,-.73,.69,0)),
+                                              airsim.Quaternionr(0,0,-.73,.69)),
                                   airsim.Pose(airsim.Vector3r(-800,-4,-.7),
-                                              airsim.Quaternionr(0,.02,1.0,0))]
+                                              airsim.Quaternionr(0,0,.02,1.0))]
 
     # quaternionr is x, y, z, w for whatever reason
     # (note:sim displays w, x, y, z when press ';')
@@ -335,18 +335,19 @@ class DriverAgent():
 
     # neural network to approximate the policy/Q function
     self.online_Q = Sequential()
-    self.online_Q.add(Convolution2D(192, kernel_size=8, strides=6, input_shape=IMG_SHAPE,
+    self.online_Q.add(Convolution2D(128, kernel_size=7, strides=5, input_shape=IMG_SHAPE,
                                     data_format='channels_last', activation='relu'))
-    self.online_Q.add(Convolution2D(128, kernel_size=4, strides=4, activation='relu'))
-    self.online_Q.add(MaxPooling2D(pool_size=4, strides=2))
+    self.online_Q.add(Convolution2D(64, kernel_size=5, strides=3, activation='relu'))
+    self.online_Q.add(MaxPooling2D(pool_size=4, strides=3))
     self.online_Q.add(Flatten())
-    self.online_Q.add(Dense(128, activation='relu'))  #relu = max{0, x}
-    self.online_Q.add(Dense(128, activation='relu'))  
-    self.online_Q.add(Dense(num_steering_angles))  # 1 output per steering angle
+    self.online_Q.add(Dense(128, activation='sigmoid'))  #relu = max{0, x}
+    self.online_Q.add(Dense(64, activation='sigmoid'))
+    self.online_Q.add(Dense(32, activation='sigmoid'))
+    self.online_Q.add(Dense(num_steering_angles, activation='linear'))  # 1 output per steering angle
 
     self.offline_Q = self.online_Q # target network -- used to update weights
-    self.offline_Q.compile(optimizer='rmsprop', loss='mse')
-    self.online_Q.compile(optimizer='rmsprop', loss='mse') # used for selecting actions -- copies weights from offline
+    self.offline_Q.compile(optimizer='adam', loss='mse')
+    self.online_Q.compile(optimizer='adam', loss='mse') # used for selecting actions -- copies weights from offline
 
     # try to load weights if there are any to load and want to load
     self.weights_directory = os.path.join(os.getcwd(), 'deep_nn_collision_avoidance_weights')
@@ -354,13 +355,14 @@ class DriverAgent():
       self.load_specific_weights_into_networks(filepath=specific_weights_filepath)
     elif load_most_recent_weights is True:
       self.load_most_recent_weights_into_networks()
+
+    print(self.online_Q.summary())
     
   def load_specific_weights_into_networks(self, filepath):
     try:
       self.online_Q.load_weights(filepath)
       self.offline_Q.load_weights(filepath)
-    except Error as e:
-      print(e)
+    except:
       print('Could not load these weights from {}. Will use random weights instead.'.format(filepath))
 
   def load_most_recent_weights_into_networks(self):
@@ -394,8 +396,7 @@ class DriverAgent():
                                                   file_name_of_weights))
           self.offline_Q.load_weights(os.path.join(self.weights_directory,
                                                    file_name_of_weights))
-        except Error as e:
-          print(e)
+        except:
           print('Could not load weights. Perhaps the network architectures do not match?')
 
     
@@ -416,7 +417,7 @@ class DriverAgent():
       # or vehicle or building or curb or etc.
       return -1.0
     else:
-      return 0.5
+      return 0.01
 
   def my_train_with_keras(self):
     """
@@ -475,8 +476,7 @@ class DriverAgent():
     for i_th_timestep in range(self.mini_batch_size):
       targets[i_th_timestep][a[i_th_timestep][0]] = delta[i_th_timestep]
 
-    self.online_Q.fit(np.asarray(s), targets, shuffle=False, verbose=0)
-
+    self.online_Q.train_on_batch(x=np.asarray(s), y=targets)
 
   def copy_online_weights_to_offline(self):
     """
@@ -502,7 +502,10 @@ class DriverAgent():
     return (action_idx, self.action_space[action_idx])
 
   def get_network_steering_angle(self, state_t):
-    action_idx = np.argmax(self.online_Q.predict(state_t.reshape((1,)+IMG_SHAPE)))
+    yo = self.online_Q.predict(state_t.reshape((1,)+IMG_SHAPE))
+    print(yo)
+    action_idx= np.argmax(yo)
+    print(action_idx)
     return (action_idx, self.action_space[action_idx])
 
   def remember(self, quadruple):
@@ -581,13 +584,13 @@ def init_car_controls():
 
 print('Getting ready')
 car_controls = init_car_controls()
-replay_memory_size = 1024 # units=num images
-episode_length = 256 # \neq to fps; fps depends on hardware
+replay_memory_size = 512 # units=num images
+episode_length = 64 # \neq to fps; fps depends on hardware
 mini_batch_train_size = 16
 assert mini_batch_train_size <= replay_memory_size
-C = 128 # copy weights to offline target Q net every n time steps
+C = 64 # copy weights to offline target Q net every n time steps
 num_episodes = 20
-epsilon = 0.9  # probability of selecting a random action/steering angle
+epsilon = 0.5  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
 num_steering_angles = 10
 reward_delay = 0.05 # seconds until know assign reward
