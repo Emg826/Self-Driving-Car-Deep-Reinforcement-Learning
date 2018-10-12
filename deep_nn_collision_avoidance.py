@@ -47,6 +47,7 @@ import random
 
 from keras.models import Sequential
 from keras.layers import Convolution2D, Flatten, Dense, MaxPooling2D
+from keras.regularizers import l1_l2
 
 IMG_SHAPE = (260, 1190,  4) # H x W x NUM_CHANNELS
 random.seed(3)
@@ -335,14 +336,21 @@ class DriverAgent():
 
     # neural network to approximate the policy/Q function
     self.online_Q = Sequential()
-    self.online_Q.add(Convolution2D(128, kernel_size=7, strides=5, input_shape=IMG_SHAPE,
-                                    data_format='channels_last', activation='relu'))
-    self.online_Q.add(Convolution2D(64, kernel_size=5, strides=3, activation='relu'))
-    self.online_Q.add(MaxPooling2D(pool_size=4, strides=3))
+    self.online_Q.add(Convolution2D(128, kernel_size=8, strides=5, input_shape=IMG_SHAPE,
+                                    data_format='channels_last', activation='relu',
+                                    activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
+    self.online_Q.add(Convolution2D(92, kernel_size=5, strides=3, activation='relu',
+                                    activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
+    self.online_Q.add(Convolution2D(64, kernel_size=3, strides=2, activation='relu',
+                                    activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
+    self.online_Q.add(MaxPooling2D(pool_size=4, strides=2))
     self.online_Q.add(Flatten())
-    self.online_Q.add(Dense(128, activation='sigmoid'))  #relu = max{0, x}
-    self.online_Q.add(Dense(64, activation='sigmoid'))
-    self.online_Q.add(Dense(32, activation='sigmoid'))
+    self.online_Q.add(Dense(128, activation='sigmoid',
+                            activity_regularizer=l1_l2(l1=0.01, l2=0.01)))  #relu = max{0, x}
+    self.online_Q.add(Dense(64, activation='sigmoid',
+                            activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
+    self.online_Q.add(Dense(32, activation='sigmoid',
+                            activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
     self.online_Q.add(Dense(num_steering_angles, activation='linear'))  # 1 output per steering angle
 
     self.offline_Q = self.online_Q # target network -- used to update weights
@@ -502,10 +510,9 @@ class DriverAgent():
     return (action_idx, self.action_space[action_idx])
 
   def get_network_steering_angle(self, state_t):
-    yo = self.online_Q.predict(state_t.reshape((1,)+IMG_SHAPE))
-    print(yo)
-    action_idx= np.argmax(yo)
-    print(action_idx)
+    q_vector = self.online_Q.predict(state_t.reshape((1,)+IMG_SHAPE))
+    print('Q values: {}'.format(q_vector))
+    action_idx = np.argmax(q_vector)
     return (action_idx, self.action_space[action_idx])
 
   def remember(self, quadruple):
@@ -585,7 +592,7 @@ def init_car_controls():
 print('Getting ready')
 car_controls = init_car_controls()
 replay_memory_size = 512 # units=num images
-episode_length = 64 # \neq to fps; fps depends on hardware
+episode_length = 72 # \neq to fps; fps depends on hardware
 mini_batch_train_size = 16
 assert mini_batch_train_size <= replay_memory_size
 C = 64 # copy weights to offline target Q net every n time steps
