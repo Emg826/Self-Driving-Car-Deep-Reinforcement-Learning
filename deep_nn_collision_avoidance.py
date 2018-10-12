@@ -70,8 +70,61 @@ class AirSimEnv():
     self.backward_cam_name = '4'
 
     self.setup_my_cameras()
-    # +x is fwd, +y is right, -z is up
-    self.emergency_reset_coords = airsim.Vector3r(x_val=0, y_val=0, z_val=-0.7) 
+    # i just drove around and hit ';' and found the vectors and
+    # quaternions of those locations
+    self.emergency_reset_poses = [airsim.Pose(airsim.Vector3r(46,-530,-.7),
+                                              airsim.Quaternionr(0,.01,1.02,0)),
+                                  airsim.Pose(airsim.Vector3r(320,-18,-.7),
+                                              airsim.Quaternionr(0,1.0, .01,0)),
+                                  airsim.Pose(airsim.Vector3r(229,-313,-.7),
+                                              airsim.Quaternionr(0,-.73,.69,0)),
+                                  airsim.Pose(airsim.Vector3r(-800,-4,-.7),
+                                              airsim.Quaternionr(0,.02,1.0,0))]
+
+    # quaternionr is x, y, z, w for whatever reason
+    # (note:sim displays w, x, y, z when press ';')
+    self.normal_reset_poses = [airsim.Pose(airsim.Vector3r(63,50,-.7),
+                                           airsim.Quaternionr(0,0,.71,.7)),
+                               airsim.Pose(airsim.Vector3r(62,140,-.7),
+                                           airsim.Quaternionr(0,0,.71,.7,)),
+                               airsim.Pose(airsim.Vector3r(114,228,-.7),
+                                           airsim.Quaternionr(0,0,-0.37,.99)),
+                               airsim.Pose(airsim.Vector3r(296,51,-.7),
+                                           airsim.Quaternionr(0,0,-.0675,.738)),
+                               airsim.Pose(airsim.Vector3r(298, 23, -.7),
+                                           airsim.Quaternionr(0,0,-.653,.721)),
+                               airsim.Pose(airsim.Vector3r(342,-14,-.7),
+                                           airsim.Quaternionr(0,0,-1.06,.014)),
+                               airsim.Pose(airsim.Vector3r(200,10.4,-.7),
+                                           airsim.Quaternionr(0,0,1.0,.009)),
+                               airsim.Pose(airsim.Vector3r(166,-65,-.7),
+                                           airsim.Quaternionr(0,0,-.661,0.75)),
+                               airsim.Pose(airsim.Vector3r(230,304,-.7),
+                                           airsim.Quaternionr(0,0,-.708,.711)),
+                               airsim.Pose(airsim.Vector3r(241,-481,-.7),
+                                           airsim.Quaternionr(0,0,1.006,0)),
+                               airsim.Pose(airsim.Vector3r(64,-520,-.7),
+                                           airsim.Quaternionr(0,0,.712,.707)),
+                               airsim.Pose(airsim.Vector3r(-24,-529,-.7),
+                                           airsim.Quaternionr(0,0,.004,1.0)),
+                               airsim.Pose(airsim.Vector3r(-5.5,-300,-.7),
+                                           airsim.Quaternionr(0,0,.7,.7,)),
+                               airsim.Pose(airsim.Vector3r(-236,-11,-.7),
+                                           airsim.Quaternionr(0,0,1.0,0)),
+                               airsim.Pose(airsim.Vector3r(-356,94,-.7),
+                                           airsim.Quaternionr(0,0,-1.0,0)),
+                               airsim.Pose(airsim.Vector3r(-456,-11,-.7),
+                                           airsim.Quaternionr(0,0,1.0,.007)),
+                               airsim.Pose(airsim.Vector3r(-553,22.5,-.7),
+                                           airsim.Quaternionr(0,0,.702,.712)),
+                               airsim.Pose(airsim.Vector3r(-661,148.3,-.7),
+                                           airsim.Quaternionr(0,0,-.03,1.0)),
+                               airsim.Pose(airsim.Vector3r(-480,241,-.7),
+                                           airsim.Quaternionr(0,0,-.07,1.0)),
+                               airsim.Pose(airsim.Vector3r(-165,85,-.7),
+                                           airsim.Quaternionr(0,0,-.687,.72)),
+                               airsim.Pose(airsim.Vector3r(89,89,-.7),
+                                           airsim.Quaternionr(0,0,.01,1.0))]
 
   def get_environment_state(self):
     """
@@ -222,12 +275,16 @@ class AirSimEnv():
     """
     print('EMERGENCY RESET TRIGGERED!')
     self.freeze_sim()
-    self.emergency_reset_coords.x_val = (self.emergency_reset_coords.x_val - 12) % -800
     self.client.armDisarm(True)
     self.client.reset()  # needed to make car stop rotating upon respawn
-    self.client.simSetVehiclePose(pose=airsim.Pose(position_val=self.emergency_reset_coords,
-                                                   orientation_val=airsim.Quaternionr(0,0,0,0)),
+    emergency_pose = self.emergency_reset_poses[random.randint(0, len(self.emergency_reset_poses)-1)]
+    
+    self.client.simSetVehiclePose(pose=emergency_pose,
                                   ignore_collison=True)
+
+    print('\t respawned at {}'.format(emergency_pose.position))
+    print('\t \t with orientation {}'.format(emergency_pose.orientation))
+    
     self.unfreeze_sim()                               
                                                    
   def normal_reset(self):
@@ -235,7 +292,13 @@ class AirSimEnv():
     Pauses the simulation before resetting the vehicle.
     """
     self.freeze_sim()
+    self.client.armDisarm(True)
     self.client.reset()
+    normal_pose = self.normal_reset_poses[random.randint(0, len(self.normal_reset_poses)-1)]
+    self.client.simSetVehiclePose(pose=normal_pose,
+                                  ignore_collison=True)
+    print('\t respawned at {}'.format(normal_pose.position))
+    print('\t \t with orientation {}'.format(normal_pose.orientation))
     self.unfreeze_sim()
 
 
@@ -323,7 +386,6 @@ class DriverAgent():
         print('No weight files to load in {}'.format(self.weights_directory))
         return
       else:
-        print(list_of_files)
         list_of_files.sort()
         file_name_of_weights = list_of_files[-1] # expect .h5 file
 
@@ -509,7 +571,7 @@ class ReplayMemory():
 # thank you: https://leonardoaraujosantos.gitbooks.io/artificial-inteligence/content/deep_q_learning.html
 def init_car_controls():
   car_controls = airsim.CarControls()
-  car_controls.throttle = 0.5
+  car_controls.throttle = 0.5125
   car_controls.steering = 0.0
   car_controls.is_manual_gear = True
   car_controls.manual_gear = 1  # should constrain speed
@@ -521,11 +583,11 @@ print('Getting ready')
 car_controls = init_car_controls()
 replay_memory_size = 1024 # units=num images
 episode_length = 256 # \neq to fps; fps depends on hardware
-mini_batch_train_size = 32
+mini_batch_train_size = 16
 assert mini_batch_train_size <= replay_memory_size
 C = 128 # copy weights to offline target Q net every n time steps
 num_episodes = 20
-epsilon = 1.0  # probability of selecting a random action/steering angle
+epsilon = 0.9  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
 num_steering_angles = 10
 reward_delay = 0.05 # seconds until know assign reward
@@ -560,7 +622,7 @@ for episode_num in range(num_episodes):
 
   # for each time step
   for t in range(1, episode_length+1):
-    print('\t time step {}'.format(t))
+    print('\t time step {} of {}'.format(t, episode_length))
     airsim_env.unfreeze_sim()   # unfreeze for init loop or after previous step
 
     # Observation t
