@@ -48,11 +48,45 @@ import random
 from keras.models import Sequential
 from keras.layers import Convolution2D, Flatten, Dense, MaxPooling2D
 from keras.regularizers import l1_l2
+from keras.optimizers import RMSprop
+import keras.backend as K
 
 IMG_SHAPE = (260, 1190,  4) # H x W x NUM_CHANNELS
 random.seed(3)
 
 
+def dqn_loss(y_true, y_pred):
+  #for debugging purposes - mse
+  #return K.mean(K.square(y_pred - y_true), axis=-1) #  mean of each row?
+
+  # note: each idx in y_true or y_pred is an output, so
+  # so each of these is 2D, right?
+
+  print('hello')
+  y_true = K.eval(y_true) # dense_4_target?
+  print('First one eval\'d')
+  y_pred = K.eval(y_pred)
+  
+  total_squared_loss = 0.0
+  for r_idx in range(0, y_true.shape[0]):
+    print(r_idx)
+    targets = y_true[r_idx]
+    predictions = y_pred[r_idx]
+
+    max_action_idx = np.argmax(target_Q) 
+    target_Q = targets[max_action_idx]
+    predicted_Q = predictions[max_action_idx]
+
+    total_squared_loss += (target_Q - predicted_Q)
+
+  print('goodbye')
+  return K.variable((total_squared_loss / y_true.shape[0]), )
+
+
+  #max_idx = K.argmax(y_true)
+  #return K.square(K.gather(y_pred, max_idx) - K.max(y_true, axis=-1))
+
+                               
 class AirSimEnv():
   """
   This is the virtual representation of the environment with which
@@ -334,6 +368,8 @@ class DriverAgent():
     # ^ is a list for because actions stored are steering angles, not ouput node idx
     # and lists have method .index(val_in_list) [used in training]
 
+    self.optimizer = RMSprop()
+
     # neural network to approximate the policy/Q function
     self.online_Q = Sequential()
     self.online_Q.add(Convolution2D(128, kernel_size=8, strides=5, input_shape=IMG_SHAPE,
@@ -354,8 +390,8 @@ class DriverAgent():
     self.online_Q.add(Dense(num_steering_angles, activation='linear'))  # 1 output per steering angle
 
     self.offline_Q = self.online_Q # target network -- used to update weights
-    self.offline_Q.compile(optimizer='adam', loss='mse')
-    self.online_Q.compile(optimizer='adam', loss='mse') # used for selecting actions -- copies weights from offline
+    self.offline_Q.compile(optimizer='adam', loss=dqn_loss)
+    self.online_Q.compile(optimizer='adam', loss=dqn_loss) # used for selecting actions -- copies weights from offline
 
     # try to load weights if there are any to load and want to load
     self.weights_directory = os.path.join(os.getcwd(), 'deep_nn_collision_avoidance_weights')
@@ -427,7 +463,58 @@ class DriverAgent():
     else:
       return 0.01
 
-  def my_train_with_keras(self):
+  def my_train(self):
+    mini_batch = self.replay_memory.mini_batch_random_sample()
+
+    s = [quadruple[0] for quadruple in mini_batch]
+    a = [quadruple[1] for quadruple in mini_batch]
+    r = [quadruple[2] for quadruple in mini_batch]
+    s2 = [quadruple[3] for quadruple in mini_batch]
+    
+    # delta = r + (1-terminal) * gamma * max_a Q^(s2, a) - Q(s, a)
+    # list of terminal/not terminal step
+    term = [1 if s2 is None else 0 for state in s2] # not what they do, but get same result later
+
+    # need to do this, else will give Q net None objects if have terminal quadruples
+    for idx, elem in enumerate(s2):
+      if elem is None:
+        s2[idx] = s[idx]
+        
+    # get max q values from offline predictions: -- Compute max_a Q(s_2, a).
+
+    batch_of_q_vectors = self.offline_Q.predict(np.asarray(s2))
+    q2_max = [np.max(q_vector) for q_vector in batch_of_q_vectors] # action decided in past, so don't care here
+
+    # -- Compute q2 = (1-terminal) * gamma * max_a Q^(s2, a)
+    q2 = [(1-term_val)*self.gamma * q_val for q_val, term_val in zip(q2_max, term)]
+
+    delta = r[:]
+
+    # rescale r's if you want to, but i won't
+    delta = [r1_val + q2_val for r1_val, q2_val in zip(r, q2)]
+    # ^ is now just the list of targets?
+
+    # now get the online Q's, the predicteds
+    # q = Q(s, a)
+    q_all = self.online_Q.predict(np.asarray(s)) # mini_batch_size x num_steering angles
+    q = [0.0] * self.mini_batch_size # mini_batch_size x 1
+    for i_th_timestep in range(len(q_all)):  # note: i think lua uses 1 as 1st idx
+      # get just predicted q val for action that was chosen in past
+      # self.action_space.index(a[i_th_timestep]) returns an idx (0 to num_steering_angels-1)
+      q[i_th_timestep] = q_all[i_th_timestep][a[i_th_timestep][0]]
+
+    # now list of (r + (1-terminal) * gamma * max_a Q^(s2, a) - Q(s, a)^2
+    # this is the loss from the DQN Nature paper
+    losses = [(target - predicted)**2 for target, predicted in zip(delta, q)]
+
+    # if i understand this correctly, this does gradient descent on loss
+    # w/ respect to weights of network
+    new_weights = self.optimizer.get_updates(loss=losses, params=self.online_Q.get_config())
+    print(new_weights.shape)
+    self.online_Q.set_weights(new_weights)
+
+
+  def lua_and_keras_train(self):
     """
     This is my attempt to combine python's Keras and the lua code
     from DeepMind's github that contains the deep q network code.
@@ -484,6 +571,7 @@ class DriverAgent():
     for i_th_timestep in range(self.mini_batch_size):
       targets[i_th_timestep][a[i_th_timestep][0]] = delta[i_th_timestep]
 
+    # all of the above was getQUpdates() in NeuralQLearner.lua
     self.online_Q.train_on_batch(x=np.asarray(s), y=targets)
 
   def copy_online_weights_to_offline(self):
@@ -592,8 +680,8 @@ def init_car_controls():
 print('Getting ready')
 car_controls = init_car_controls()
 replay_memory_size = 512 # units=num images
-episode_length = 72 # \neq to fps; fps depends on hardware
-mini_batch_train_size = 16
+episode_length = 7 # \neq to fps; fps depends on hardware
+mini_batch_train_size = 3
 assert mini_batch_train_size <= replay_memory_size
 C = 64 # copy weights to offline target Q net every n time steps
 num_episodes = 20
@@ -686,7 +774,7 @@ for episode_num in range(num_episodes):
     # only train and/or copy weights after the 1st episode
     iteration_count = t + episode_length*episode_num
     if episode_num > 0: 
-      driver_agent.my_train_with_keras()
+      driver_agent.lua_and_keras_train()
 
     if iteration_count % C == 0:
       driver_agent.copy_online_weights_to_offline()
