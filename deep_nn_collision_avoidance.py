@@ -57,11 +57,11 @@ random.seed(3)
 
 def dqn_loss(y_true, y_pred):
   #for debugging purposes - mse
-  #return K.mean(K.square(y_pred - y_true), axis=-1) #  mean of each row?
+  return K.mean(K.square(y_pred - y_true), axis=-1) #  mean of each row?
 
   # note: each idx in y_true or y_pred is an output, so
   # so each of these is 2D, right?
-
+def acvasdf(y_true, y_pred):
   print('hello')
   y_true = K.eval(y_true) # dense_4_target?
   print('First one eval\'d')
@@ -83,8 +83,6 @@ def dqn_loss(y_true, y_pred):
   return K.variable((total_squared_loss / y_true.shape[0]), )
 
 
-  #max_idx = K.argmax(y_true)
-  #return K.square(K.gather(y_pred, max_idx) - K.max(y_true, axis=-1))
 
                                
 class AirSimEnv():
@@ -175,6 +173,10 @@ class AirSimEnv():
     sim_img_responses = self.request_all_4_sim_images(cam_names)
     return self.make_composite_image_from_responses(sim_img_responses,
                                                     cam_names)
+
+  def get_collision_state(self):
+    """ Returns False if no collision; True otherwise"""
+    return self.client.simGetCollisionInfo().has_collided
 
   def get_car_state(self):
     """
@@ -445,7 +447,7 @@ class DriverAgent():
 
     
 
-  def current_reward(self, car_state):
+  def current_reward(self, car_state, just_collided):
     """
     Custom reward function
 
@@ -455,7 +457,7 @@ class DriverAgent():
 
     *Note: want to keep the rewards in [-1, 1] (see DeepMind Nature paper)
     """
-    if car_state.collision.has_collided is True:
+    if just_collided is True:
       # collisions attrib has object_id (collided w/), so
       # very easily could modify and see if collided with person
       # or vehicle or building or curb or etc.
@@ -679,16 +681,20 @@ def init_car_controls():
 
 print('Getting ready')
 car_controls = init_car_controls()
-replay_memory_size = 512 # units=num images
-episode_length = 7 # \neq to fps; fps depends on hardware
-mini_batch_train_size = 3
+replay_memory_size = 2048 # units=num images
+reward_delay = 0.05 # seconds until know assign reward
+episode_length =  int((1/reward_delay) * 180) # \neq to fps; fps depends on hardware
+# right product should (roughly) be in seconds
+mini_batch_train_size = 32
+
 assert mini_batch_train_size <= replay_memory_size
-C = 64 # copy weights to offline target Q net every n time steps
-num_episodes = 20
+
+C = 100 # copy weights to offline target Q net every n time steps
+num_episodes = 100
 epsilon = 1.0  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
 num_steering_angles = 10
-reward_delay = 0.05 # seconds until know assign reward
+train_frequency = 4 # train every n timesteps
 
 print('On a perfect comptuer, the given settings indicate that each of the {} episodes '
       'should last about {} seconds ({} seconds in total)'.format(num_episodes,
@@ -707,8 +713,10 @@ airsim_env = AirSimEnv()
 airsim_env.freeze_sim()  # freeze until enter loops
 
 
+collisions_in_a_row = 0
+collisions_in_a_row_before_restart = (1 / reward_delay) * 2 # seconds
+epsilon += episodic_epsilon_linear_decay_amount # so that 1st episode uses epsilon
 # for each episode
-epsilon += episodic_epsilon_linear_decay_amount # so that 1st episode uses epsilon 
 for episode_num in range(num_episodes):
   print('Starting episode {}'.format(episode_num+1))
   print('{} seconds (roughly) until all episodes finish'.format((num_episodes-episode_num)*episode_length*reward_delay))
@@ -763,9 +771,11 @@ for episode_num in range(num_episodes):
     if t != episode_length:
       state_t_plus_1 = airsim_env.get_environment_state()
 
+    just_collided = airsim_env.get_collision_state()
+    reward_t = driver_agent.current_reward(None, just_collided)
+
     airsim_env.freeze_sim()  # freeze to do training stuff
 
-    reward_t = driver_agent.current_reward(car_state_t_plus_1)
     driver_agent.remember( (state_t,
                             action_t,
                             reward_t,
@@ -773,12 +783,23 @@ for episode_num in range(num_episodes):
 
     # only train and/or copy weights after the 1st episode
     iteration_count = t + episode_length*episode_num
-    if episode_num > 0: 
+    if episode_num > 0 and (iteration_count % train_frequency) == 0: 
       driver_agent.lua_and_keras_train()
 
     if iteration_count % C == 0:
       driver_agent.copy_online_weights_to_offline()
-      driver_agent.save_weights() 
+      driver_agent.save_weights()
+
+    if just_collided is True:
+      collisions_in_a_row += 1
+      if collisions_in_a_row >= collisions_in_a_row_before_restart:
+        airsim_env.freeze_sim()
+        airsim_env.normal_reset()
+        airsim_env.unfreeze_sim()
+        collisions_in_a_row = 0 # reset this counter
+    else:
+      collisions_in_a_row = 0
+      
 
   # END inner for
 # END OUTER for
