@@ -681,7 +681,7 @@ def init_car_controls():
 
 print('Getting ready')
 car_controls = init_car_controls()
-replay_memory_size = 2048 # units=num images
+replay_memory_size = 10000 # units=num images
 reward_delay = 0.05 # seconds until know assign reward
 episode_length =  int((1/reward_delay) * 180) # \neq to fps; fps depends on hardware
 # right product should (roughly) be in seconds
