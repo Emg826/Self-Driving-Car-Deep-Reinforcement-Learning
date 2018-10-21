@@ -20,6 +20,7 @@ https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/types.py
 https://github.com/Microsoft/AirSim/blob/master/PythonClient/airsim/client.py
 
 helpful for DRL: https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_atari.py
+finally someone with some sense: https://stats.stackexchange.com/questions/306921/how-to-update-network-weights-in-dqn
 """
 
 ### NOTE! - Copy and paste the below to replace in your settings.json file
