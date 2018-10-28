@@ -138,10 +138,10 @@ class AirSimEnv(gym.Env):
     self.episode_start_time = time.time()
     self.client.simPause(False)
     
-    return self._get_environment_state()
+    return self._get_environment_state() # just to have an initial state?
 
   def render(self, mode='human'):
-    pass
+    pass  # airsim server binary handles rendering; we're just the client
     
 
   def _get_reward(self, collision_info):
