@@ -36,7 +36,8 @@ finally someone with some sense: https://stats.stackexchange.com/questions/30692
       "Height": 260,
       "FOV_Degrees": 90
     }]
-  }
+  },
+  "SubWindows": []
 }
 """
 
@@ -52,7 +53,9 @@ from keras.regularizers import l1_l2
 from keras.optimizers import RMSprop
 import keras.backend as K
 
-IMG_SHAPE = (260, 1190,  4) # H x W x NUM_CHANNELS
+
+INPUTS_TO_STACK = 4
+IMG_SHAPE = (260, 1190,  INPUTS_TO_STACK) # H x W x INPUTS_TO_STACK
 random.seed(3)
 
 
@@ -240,7 +243,7 @@ class AirSimEnv():
     for cam_name in cam_names:
       list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
                                                            image_type=airsim.ImageType.Scene,
-                                                           pixels_as_float=False,
+                                                           pixels_as_float=True,
                                                            compress=False) )
 
     return self.client.simGetImages(list_of_img_request_objs)
@@ -375,20 +378,14 @@ class DriverAgent():
 
     # neural network to approximate the policy/Q function
     self.online_Q = Sequential()
-    self.online_Q.add(Convolution2D(128, kernel_size=8, strides=5, input_shape=IMG_SHAPE,
+    self.online_Q.add(Convolution2D(128, kernel_size=8, strides=6, input_shape=IMG_SHAPE,
                                     data_format='channels_last', activation='relu',
                                     activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
-    self.online_Q.add(Convolution2D(92, kernel_size=5, strides=3, activation='relu',
-                                    activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
-    self.online_Q.add(Convolution2D(64, kernel_size=3, strides=2, activation='relu',
-                                    activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
-    self.online_Q.add(MaxPooling2D(pool_size=4, strides=2))
+    self.online_Q.add(MaxPooling2D(pool_size=6, strides=4))
     self.online_Q.add(Flatten())
     self.online_Q.add(Dense(128, activation='sigmoid',
                             activity_regularizer=l1_l2(l1=0.01, l2=0.01)))  #relu = max{0, x}
     self.online_Q.add(Dense(64, activation='sigmoid',
-                            activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
-    self.online_Q.add(Dense(32, activation='sigmoid',
                             activity_regularizer=l1_l2(l1=0.01, l2=0.01)))
     self.online_Q.add(Dense(num_steering_angles, activation='linear'))  # 1 output per steering angle
 
@@ -464,7 +461,7 @@ class DriverAgent():
       # or vehicle or building or curb or etc.
       return -1.0
     else:
-      return 0.01
+      return 0.1
 
   def my_train(self):
     mini_batch = self.replay_memory.mini_batch_random_sample()
@@ -552,6 +549,7 @@ class DriverAgent():
 
     # rescale r's if you want to, but i won't
     delta = [r1_val + q2_val for r1_val, q2_val in zip(r, q2)]
+    delta_copy = delta.copy()  # i just wanted to see if using delta as targets results in better training
     # ^ is now just the list of targets?
 
     # now get the online Q's, the predicteds
@@ -595,12 +593,11 @@ class DriverAgent():
                                                  weights_filename))
     print('Weights saved at {}s in file {}'.format(time_stamp, weights_filename))
 
-
   def get_random_steering_angle(self):
     action_idx = random.randint(0, self.num_steering_angles-1)
     return (action_idx, self.action_space[action_idx])
 
-  def get_network_steering_angle(self, state_t):
+  def get_dqn_steering_angle(self, state_t):
     q_vector = self.online_Q.predict(state_t.reshape((1,)+IMG_SHAPE))
     print('Q values: {}'.format(q_vector))
     action_idx = np.argmax(q_vector)
@@ -684,17 +681,17 @@ print('Getting ready')
 car_controls = init_car_controls()
 replay_memory_size = 10000 # units=num images
 reward_delay = 0.05 # seconds until know assign reward
-episode_length =  int((1/reward_delay) * 180) # \neq to fps; fps depends on hardware
+episode_length =  int((1/reward_delay) * 5) # \neq to fps; fps depends on hardware
 # right product should (roughly) be in seconds
 mini_batch_train_size = 32
 
 assert mini_batch_train_size <= replay_memory_size
 
-C = 100 # copy weights to offline target Q net every n time steps
-num_episodes = 100
-epsilon = 1.0  # probability of selecting a random action/steering angle
+C = 250 # copy weights to offline target Q net every n time steps
+num_episodes = 20
+epsilon = 0.5  # probability of selecting a random action/steering angle
 episodic_epsilon_linear_decay_amount = (epsilon / num_episodes) # decay to 0
-num_steering_angles = 10
+num_steering_angles = 5
 train_frequency = 4 # train every n timesteps
 
 print('On a perfect comptuer, the given settings indicate that each of the {} episodes '
@@ -752,7 +749,7 @@ for episode_num in range(num_episodes):
       print('\t Random Steering angle: {}'.format(action_t[1]))
     # else, consult the policy/Q network
     else:
-      action_t = driver_agent.get_network_steering_angle(state_t)
+      action_t = driver_agent.get_dqn_steering_angle(state_t)
       print('\t DQN Steering angle: {}'.format(action_t[1]))
 
     

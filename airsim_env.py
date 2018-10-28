@@ -114,11 +114,16 @@ class AirSimEnv(gym.Env):
     self.client.simPause(True)  # pause to do backend stuff
 
     reward = self._get_reward(collision_info)
-    
+
+    # done if episode timer runs out (1) OR if fallen into oblilvion (2)
+    # OR if spinning out of control (3) OR if knocked into the stratosphere (4)
     done = False
-    if (time.time() - self.episode_start_time) > self.episode_length:
+    if (time.time() - self.episode_start_time) > self.episode_length or \
+       car_info.kinematics_estimated.position.z_val > -0.5125 or \
+       abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
+       car_info.speed > 40.0:
       done = True
-      
+
     return state_t2, reward, done, {}
 
   def reset(self):
@@ -130,7 +135,7 @@ class AirSimEnv(gym.Env):
     self.client.simSetVehiclePose(pose=emergency_pose,
                                   ignore_collison=True)
     
-    self.episode_state_time = time.time()
+    self.episode_start_time = time.time()
     self.client.simPause(False)
     
     return self._get_environment_state()
