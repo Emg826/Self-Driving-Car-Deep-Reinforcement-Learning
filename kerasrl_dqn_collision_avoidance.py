@@ -28,13 +28,13 @@ WINDOW_LENGTH = 3
 input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(96, kernel_size=4, strides=2 ,activation='relu',
+model.add(Conv2D(64, kernel_size=4, strides=2 ,activation='relu',
                  input_shape=input_shape, data_format = "channels_first"))
 model.add(Conv2D(128, kernel_size=4, strides=2,  activation='relu'))
-model.add(Conv2D(256, kernel_size=4, strides=2,  activation='relu'))
+model.add(Conv2D(256, kernel_size=5, strides=2,  activation='relu'))
 model.add(Flatten())
-model.add(Dense(128, activation='sigmoid'))
-model.add(Dense(256, activation='sigmoid'))
+model.add(Dense(96, activation='sigmoid'))
+model.add(Dense(150, activation='sigmoid'))
 model.add(Dense(num_steering_angles, activation='linear'))
 print(model.summary())
 

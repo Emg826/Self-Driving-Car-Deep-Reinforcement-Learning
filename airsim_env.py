@@ -41,7 +41,7 @@ class AirSimEnv(gym.Env):
                                            is_manual_gear=True,
                                            manual_gear=1)
     self.reward_delay = 0.05  # real-life seconds
-    self.episode_step_count = 1
+    self.episode_step_count = 1.0  # 1.0 so that 
     self.steps_per_episode = (1/self.reward_delay) *  120 # right hand num is in in-game seconds 
     
     self.collisions_in_a_row = 0
@@ -139,7 +139,7 @@ class AirSimEnv(gym.Env):
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
        car_info.speed > 40.0 or \
        self.collisions_in_a_row > self.too_many_collisions_in_a_row:
-      self.episode_step_count = 0
+      self.episode_step_count = 1.0
       self.collisions_in_a_row = 0
       self.obj_id_of_last_collision = -123456789
       done = True
@@ -189,7 +189,10 @@ class AirSimEnv(gym.Env):
        (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0):  #-1 if not currently colliding
       return -1.0
     else:
-      return 1.0
+      # linear reward increase as time increase - might be necessary
+      # because want episodes to play out fully, not terminate early,
+      # i.e., you want car to make moves that get it stuck or something
+      return self.episode_step_count / self.steps_per_episode  
     
   def _get_environment_state(self):
     """
