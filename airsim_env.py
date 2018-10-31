@@ -22,8 +22,14 @@ class AirSimEnv(gym.Env):
                                            steering=0.0,
                                            is_manual_gear=True,
                                            manual_gear=1)
-    self.reward_delay = 0.05
-    self.episode_length = 120 # seconds
+    self.reward_delay = 0.05  # real-life seconds
+    self.episode_step_count = 1
+    self.steps_per_episode = (1/self.reward_delay) *  120 # right hand num is in in-game seconds 
+
+    
+    self.collisions_in_a_row = 0
+    self.too_many_collisions_in_a_row = 15 # note: if stuck, then collisions will keep piling on
+    self.obj_id_of_last_collision = -123456789
     
     self.client = airsim.CarClient()
     self.client.confirmConnection()
@@ -37,62 +43,41 @@ class AirSimEnv(gym.Env):
     self._setup_my_cameras()
     # i just drove around and hit ';' and found the vectors and
     # quaternions of those locations
-    self.emergency_reset_poses = [airsim.Pose(airsim.Vector3r(46,-530,-.7),
-                                              airsim.Quaternionr(0,0,.01,1.02)),
+    # ; ordering: 1 2 3 4 while Quaternionr() has 2 3 4 1 for some reason
+    # Note: these are all safe respawn points, i.e., not respawn into another vehicle
+    self.reset_poses = [airsim.Pose(airsim.Vector3r(46,-530,-.7),
+                                              airsim.Quaternionr(0,0,.01,1.02)), # checked
                                   airsim.Pose(airsim.Vector3r(320,-18,-.7),
-                                              airsim.Quaternionr(0,0,1.0,.01)),
+                                              airsim.Quaternionr(0,0,1.0,.01)),  # checked
                                   airsim.Pose(airsim.Vector3r(229,-313,-.7),
-                                              airsim.Quaternionr(0,0,-.73,.69)),
+                                              airsim.Quaternionr(0,0,-.73,.69)),   # checked
                                   airsim.Pose(airsim.Vector3r(-800,-4,-.7),
-                                              airsim.Quaternionr(0,0,.02,1.0))]
+                                              airsim.Quaternionr(0,0,.02,1.0)),   # checked
+                                   airsim.Pose(airsim.Vector3r(-138.292, -7.577, -0.7),
+                                                   airsim.Quaternionr(0.0, 0.0, 0.002, 1.0)),
+                                   airsim.Pose(airsim.Vector3r(68.873, 160.916, -1.05),
+                                                   airsim.Quaternionr(0.0, 0.0, -.7, 0.714)),
+                                   airsim.Pose(airsim.Vector3r(55.514, -310.598, -1.05),
+                                                   airsim.Quaternionr(0.0, 0.0, .707, .707)),
+                                   airsim.Pose(airsim.Vector3r(64.665, -352.195, -1.05),
+                                                   airsim.Quaternionr(0.0, 0.0, .717, .697)),
+                                   airsim.Pose(airsim.Vector3r(219.288, 201.129, -1.05),
+                                                   airsim.Quaternionr(0.0, 0.0, -.383, .924)),
+                                   airsim.Pose(airsim.Vector3r(67.507, 234.912, -1.05),
+                                                   airsim.Quaternionr(0.0, 0.0, -.7, 0.715))]
 
-    # quaternionr is x, y, z, w for whatever reason
-    # (note:sim displays w, x, y, z when press ';')
-    self.normal_reset_poses = [airsim.Pose(airsim.Vector3r(63,50,-.7),
-                                           airsim.Quaternionr(0,0,.71,.7)),
-                               airsim.Pose(airsim.Vector3r(62,140,-.7),
-                                           airsim.Quaternionr(0,0,.71,.7,)),
-                               airsim.Pose(airsim.Vector3r(114,228,-.7),
-                                           airsim.Quaternionr(0,0,-0.37,.99)),
-                               airsim.Pose(airsim.Vector3r(296,51,-.7),
-                                           airsim.Quaternionr(0,0,-.0675,.738)),
-                               airsim.Pose(airsim.Vector3r(298, 23, -.7),
-                                           airsim.Quaternionr(0,0,-.653,.721)),
-                               airsim.Pose(airsim.Vector3r(342,-14,-.7),
-                                           airsim.Quaternionr(0,0,-1.06,.014)),
-                               airsim.Pose(airsim.Vector3r(200,10.4,-.7),
-                                           airsim.Quaternionr(0,0,1.0,.009)),
-                               airsim.Pose(airsim.Vector3r(166,-65,-.7),
-                                           airsim.Quaternionr(0,0,-.661,0.75)),
-                               airsim.Pose(airsim.Vector3r(230,304,-.7),
-                                           airsim.Quaternionr(0,0,-.708,.711)),
-                               airsim.Pose(airsim.Vector3r(241,-481,-.7),
-                                           airsim.Quaternionr(0,0,1.006,0)),
-                               airsim.Pose(airsim.Vector3r(64,-520,-.7),
-                                           airsim.Quaternionr(0,0,.712,.707)),
-                               airsim.Pose(airsim.Vector3r(-24,-529,-.7),
-                                           airsim.Quaternionr(0,0,.004,1.0)),
-                               airsim.Pose(airsim.Vector3r(-5.5,-300,-.7),
-                                           airsim.Quaternionr(0,0,.7,.7,)),
-                               airsim.Pose(airsim.Vector3r(-236,-11,-.7),
-                                           airsim.Quaternionr(0,0,1.0,0)),
-                               airsim.Pose(airsim.Vector3r(-356,94,-.7),
-                                           airsim.Quaternionr(0,0,-1.0,0)),
-                               airsim.Pose(airsim.Vector3r(-456,-11,-.7),
-                                           airsim.Quaternionr(0,0,1.0,.007)),
-                               airsim.Pose(airsim.Vector3r(-553,22.5,-.7),
-                                           airsim.Quaternionr(0,0,.702,.712)),
-                               airsim.Pose(airsim.Vector3r(-661,148.3,-.7),
-                                           airsim.Quaternionr(0,0,-.03,1.0)),
-                               airsim.Pose(airsim.Vector3r(-480,241,-.7),
-                                           airsim.Quaternionr(0,0,-.07,1.0)),
-                               airsim.Pose(airsim.Vector3r(-165,85,-.7),
-                                           airsim.Quaternionr(0,0,-.687,.72)),
-                               airsim.Pose(airsim.Vector3r(89,89,-.7),
-                                           airsim.Quaternionr(0,0,.01,1.0))]
-    self.episode_start_time = time.time()
 
   def step(self, action):
+    """
+    The main logic for interacting with the simulation. This is where actions
+    are submitted, states and rewards are acquired, and error checking (falling into
+    oblivion, spirialing out of control, getting stuck, etc.) are all done.
+
+    :param action: an idx (so an integer) that corresponds to an action in the action_space.
+    this idx comes from the policy, i.e., from random selection or from ddqn.
+
+    :returns: standard? openai gym stuff for step() function
+    """
     assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
 
     # action_t
@@ -115,24 +100,45 @@ class AirSimEnv(gym.Env):
 
     reward = self._get_reward(collision_info)
 
+    # potential probelm of getting stuck, so track number of collisions in a row w/ same obj
+    # measure in time steps rather than time because nn can take long, variable time to train
+    # note: Landscape_1 is the side walk, which for some reason was given id=-1, same as
+    # colliding w/ nothing
+    if collision_info.object_id != -1 or 'Landscape_1' in collision_info.object_name:
+      if self.obj_id_of_last_collision == collision_info.object_id:
+        self.collisions_in_a_row += 1
+      else:
+        self.collisions_in_a_row = 1
+      self.obj_id_of_last_collision = collision_info.object_id
+        
     # done if episode timer runs out (1) OR if fallen into oblilvion (2)
     # OR if spinning out of control (3) OR if knocked into the stratosphere (4)
     done = False
-    if (time.time() - self.episode_start_time) > self.episode_length or \
+
+    if self.episode_step_count >  self.steps_per_episode or \
        car_info.kinematics_estimated.position.z_val > -0.5125 or \
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
-       car_info.speed > 40.0:
+       car_info.speed > 40.0 or \
+       self.collisions_in_a_row > self.too_many_collisions_in_a_row:
+      self.episode_step_count = 0
+      self.collisions_in_a_row = 0
+      self.obj_id_of_last_collision = -123456789
       done = True
 
     return state_t2, reward, done, {}
 
   def reset(self):
+    """
+    When done (in step()) is true, this function is called.
+
+    :returns: what the cartpole example returns (standard? for openai gym env.reset())
+    """
     self.client.simPause(True)
     self.client.armDisarm(True)
     self.client.reset()
-    emergency_pose = self.emergency_reset_poses[random.randint(0, len(self.emergency_reset_poses)-1)]
+    reset_pose = self.reset_poses[random.randint(0, len(self.reset_poses)-1)]
     
-    self.client.simSetVehiclePose(pose=emergency_pose,
+    self.client.simSetVehiclePose(pose=reset_pose,
                                   ignore_collison=True)
     
     self.episode_start_time = time.time()
@@ -145,10 +151,22 @@ class AirSimEnv(gym.Env):
     
 
   def _get_reward(self, collision_info):
-    if collision_info.has_collided:
-      return -1
+    """
+    Calculate the reward for this current time step based on whether or not
+    the car is colliding with something. This reward function does not use
+    collision_info.has_collided because that attribute tells only if collision since car last
+    reset, i.e., after stop colliding, has_collided remains true. Does not discriminate
+    between people or cars or buildings (could do so w/ object_name attribute). Clips
+    reward [-1, 1] just like in DQN paper.
+
+    :param collision_info: an airsim.CollisionInfo() object
+    :returns: floating point number, [-1, 1], of the reward for current time step
+
+    """
+    if collision_info.object_id != -1:  #-1 if not currently colliding
+      return -1.0
     else:
-      return 1
+      return 1.0
     
   def _get_environment_state(self):
     """
