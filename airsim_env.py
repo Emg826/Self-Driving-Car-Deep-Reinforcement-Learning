@@ -3,6 +3,24 @@ Based on:
 https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
 """
 
+""" For settings.json
+
+{
+  "SettingsVersion": 1.2,
+  "SimMode": "Car",
+  "RpcEnabled": true,
+  "EngineSound": false,
+  "CameraDefaults": {
+    "CaptureSettings": [{
+      "Width": 350,
+      "Height": 260,
+      "FOV_Degrees": 90
+    }]
+  }
+}
+
+"""
+
 import gym
 from gym import spaces
 import airsim
@@ -25,11 +43,10 @@ class AirSimEnv(gym.Env):
     self.reward_delay = 0.05  # real-life seconds
     self.episode_step_count = 1
     self.steps_per_episode = (1/self.reward_delay) *  120 # right hand num is in in-game seconds 
-
     
     self.collisions_in_a_row = 0
     self.too_many_collisions_in_a_row = 15 # note: if stuck, then collisions will keep piling on
-    self.obj_id_of_last_collision = -123456789
+    self.obj_id_of_last_collision = -123456789  # anything <-1 is unassociated w/ an obj in sim (afaik)
     
     self.client = airsim.CarClient()
     self.client.confirmConnection()
@@ -78,7 +95,7 @@ class AirSimEnv(gym.Env):
 
     :returns: standard? openai gym stuff for step() function
     """
-    assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
+    #assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
 
     # action_t
     steering_angle = self.action_space_steering[action]
@@ -98,13 +115,15 @@ class AirSimEnv(gym.Env):
 
     self.client.simPause(True)  # pause to do backend stuff
 
-    reward = self._get_reward(collision_info)
+    reward = self._get_reward(collision_info, car_info)
 
     # potential probelm of getting stuck, so track number of collisions in a row w/ same obj
     # measure in time steps rather than time because nn can take long, variable time to train
     # note: Landscape_1 is the side walk, which for some reason was given id=-1, same as
     # colliding w/ nothing
-    if collision_info.object_id != -1 or 'Landscape_1' in collision_info.object_name:
+    #print(collision_info.has_collided, collision_info.object_id)  # debug
+    #print(collision_info.object_name)   # debug
+    if collision_info.object_name is not '' and car_info.speed < 1.0:
       if self.obj_id_of_last_collision == collision_info.object_id:
         self.collisions_in_a_row += 1
       else:
@@ -150,7 +169,7 @@ class AirSimEnv(gym.Env):
     pass  # airsim server binary handles rendering; we're just the client
     
 
-  def _get_reward(self, collision_info):
+  def _get_reward(self, collision_info, car_info):
     """
     Calculate the reward for this current time step based on whether or not
     the car is colliding with something. This reward function does not use
@@ -163,7 +182,11 @@ class AirSimEnv(gym.Env):
     :returns: floating point number, [-1, 1], of the reward for current time step
 
     """
-    if collision_info.object_id != -1:  #-1 if not currently colliding
+    # collision id is finnicky; sometimes it will not register
+    # like has_collided, object_name does not reset to '' after uncollide, but it does tell if colliding w/ new obj
+    # and when object_id does not register, so it is more useful than has_collided
+    if collision_info.object_id != -1 or \
+       (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0):  #-1 if not currently colliding
       return -1.0
     else:
       return 1.0

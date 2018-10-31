@@ -19,8 +19,8 @@ env = AirSimEnv()
 num_steering_angles = env.action_space.n
 
 
-#random.seed(3)
-#np.random.seed(3)
+random.seed(3)
+np.random.seed(3)
 
 
 INPUT_SHAPE = (260, 1190) # H x W (no channels because assume DepthPlanner)
@@ -30,7 +30,6 @@ input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 model = Sequential()
 model.add(Conv2D(96, kernel_size=4, strides=2 ,activation='relu',
                  input_shape=input_shape, data_format = "channels_first"))
-model.add(MaxPooling2D(pool_size=(1,2), strides=2))
 model.add(Conv2D(128, kernel_size=4, strides=2,  activation='relu'))
 model.add(Conv2D(256, kernel_size=4, strides=2,  activation='relu'))
 model.add(Flatten())
@@ -52,22 +51,22 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               nb_steps=10**5) # of steps until eps is value_test?
 
 
-dqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
+ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                      memory=replay_memory, enable_double_dqn=True,
-                     enable_dueling_network=False, target_model_update=1e-2, # soft update parameter?
-                     policy=policy, gamma=0.999, train_interval=3)
+                     enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
+                     policy=policy, gamma=0.999, train_interval=4)
 
-dqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
+ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
 weights_filename = 'ddqn_collision_avoidance.h5'
 want_to_train = True
 
 if want_to_train is True:
   num_total_training_steps = 10**5
-  dqn_agent.fit(env, callbacks=None, nb_steps=num_total_training_steps,
+  ddqn_agent.fit(env, callbacks=None, nb_steps=num_total_training_steps,
                 visualize=False, verbose=2)
 
-  dqn_agent.save_weights(weights_filename)
+  ddqn_agent.save_weights(weights_filename)
 else: # else want to test
-    dqn_agent.load_weights(weights_filename)
-    dqn.test(env, nb_episodes=10, visualize=False)
+    ddqn_agent.load_weights(weights_filename)
+    ddqn.test(env, nb_episodes=10, visualize=False)
