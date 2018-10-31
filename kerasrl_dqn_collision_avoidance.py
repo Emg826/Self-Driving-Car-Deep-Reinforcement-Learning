@@ -12,6 +12,8 @@ from keras.optimizers import Adam
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
 from rl.memory import SequentialMemory
+from rl.callbacks import ModelIntervalCheckpoint  # https://github.com/keras-rl/keras-rl/blob/171667dce2a39993705b12fdf0b3cc3bb7bf26d2/rl/callbacks.py
+
 
 from airsim_env import AirSimEnv
 
@@ -63,7 +65,10 @@ want_to_train = True
 
 if want_to_train is True:
   num_total_training_steps = 10**5
-  ddqn_agent.fit(env, callbacks=None, nb_steps=num_total_training_steps,
+
+  # note: interval's units are episode_steps
+  callbacks_list = [ModelIntervalCheckpoint(filepath=weights_filename, verbose=5, interval=1000)]
+  ddqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
                 visualize=False, verbose=2)
 
   ddqn_agent.save_weights(weights_filename)
