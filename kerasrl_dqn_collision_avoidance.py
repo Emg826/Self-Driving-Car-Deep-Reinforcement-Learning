@@ -6,7 +6,7 @@ import numpy as np
 import random
 
 from keras.models import Sequential
-from keras.layers import Dense, MaxPooling2D, Flatten, Conv2D
+from keras.layers import Dense, MaxPooling2D, Flatten, Conv2D, BatchNormalization, Conv3D,MaxPooling3D
 from keras.optimizers import Adam
 
 from rl.agents.dqn import DQNAgent
@@ -21,22 +21,23 @@ env = AirSimEnv()
 num_steering_angles = env.action_space.n
 
 
-random.seed(3)
-np.random.seed(3)
+random.seed(32314)
+np.random.seed(31234)
 
-
-INPUT_SHAPE = (260, 1190) # H x W (no channels because assume DepthPlanner)
+INPUT_SHAPE = (260-int(3*260/7), 770) # H x W (no channels because assume DepthPlanner)
 WINDOW_LENGTH = 3
 input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(64, kernel_size=4, strides=2 ,activation='relu',
-                 input_shape=input_shape, data_format = "channels_first"))
-model.add(Conv2D(128, kernel_size=4, strides=2,  activation='relu'))
-model.add(Conv2D(256, kernel_size=5, strides=2,  activation='relu'))
+model.add(Conv2D(128, kernel_size=3, strides=2 ,activation='relu',
+                 input_shape=input_shape, data_format = 'channels_first'))
+model.add(Conv2D(160, kernel_size=3, strides=2,  activation='relu'))
+model.add(Conv2D(192, kernel_size=3, strides=2,  activation='relu'))
+model.add(Conv2D(192, kernel_size=3, strides=1,  activation='relu'))
 model.add(Flatten())
-model.add(Dense(96, activation='sigmoid'))
-model.add(Dense(150, activation='sigmoid'))
+model.add(Dense(160, activation='elu'))
+model.add(Dense(192, activation='elu'))
+model.add(Dense(224, activation='elu'))
 model.add(Dense(num_steering_angles, activation='linear'))
 print(model.summary())
 
@@ -56,11 +57,11 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                      memory=replay_memory, enable_double_dqn=True,
                      enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
-                     policy=policy, gamma=0.999, train_interval=4)
+                     policy=policy, gamma=0.99, train_interval=4)
 
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance.h5'
+weights_filename = 'ddqn_collision_avoidance_1101.h5'
 want_to_train = True
 
 if want_to_train is True:
@@ -74,4 +75,4 @@ if want_to_train is True:
   ddqn_agent.save_weights(weights_filename)
 else: # else want to test
     ddqn_agent.load_weights(weights_filename)
-    ddqn.test(env, nb_episodes=10, visualize=False)
+    ddqn_agent.test(env, nb_episodes=10, visualize=True)

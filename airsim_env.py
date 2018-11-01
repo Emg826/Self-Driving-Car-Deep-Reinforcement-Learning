@@ -27,6 +27,8 @@ import airsim
 import numpy as np
 import time
 import random
+import os
+import cv2
 
 
 class AirSimEnv(gym.Env):
@@ -203,13 +205,11 @@ class AirSimEnv(gym.Env):
     # puts these in the order should be concatenated (left to r)
     cam_names = [self.left_cam_name,
                  self.forward_cam_name,
-                 self.right_cam_name,
-                 self.backward_cam_name]
-    sim_img_responses = self._request_all_4_sim_images(cam_names)
-    return self._make_composite_image_from_responses(sim_img_responses,
-                                                     cam_names)
+                 self.right_cam_name]
+    sim_img_responses = self._request_all_sim_images(cam_names)
+    return self._make_composite_image_from_responses(sim_img_responses)
 
-  def _request_all_4_sim_images(self, cam_names):
+  def _request_all_sim_images(self, cam_names):
     """
     Helper to get_composite_sim_image. Make a request to the simulation from the
     client for a snapshot from each of the 4 cameras.
@@ -225,12 +225,12 @@ class AirSimEnv(gym.Env):
     for cam_name in cam_names:
       list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
                                                            image_type=airsim.ImageType.Scene,
-                                                           pixels_as_float=True,
+                                                           pixels_as_float=False,
                                                            compress=False) )
 
     return self.client.simGetImages(list_of_img_request_objs)
 
-  def _make_composite_image_from_responses(self, sim_img_responses, cam_names):
+  def _make_composite_image_from_responses(self, sim_img_responses):
     """
     Take the list of ImageResponse objects (the observation), each with
     uncompressed 1D RGBA binary string representations of images, convert
@@ -251,23 +251,22 @@ class AirSimEnv(gym.Env):
     """
     # extract the 1D  RGBA binary uint8 string images into 2D,
     # 4 channel images; append that image to a list
-    dict_of_2D_imgs = {}
 
     height = sim_img_responses[0].height
     width = sim_img_responses[0].width
+    # byte string array --> 1d numpy array --> png --> add to composite image
+    preprocess_individual = lambda img_response_obj:  cv2.cvtColor(np.fromstring(img_response_obj.image_data_uint8, dtype=np.uint8).reshape(height, width, 4),
+                                                                                          cv2.COLOR_BGR2GRAY) * 1.2 # 1.2x  brightness
+    preprocessed_individual_imgs = []
+    for img_response_obj in sim_img_responses:
+      preprocessed_individual_imgs.append(preprocess_individual(img_response_obj)*2.0)
 
-    for cam_name, sim_img_response in zip(cam_names, sim_img_responses):
-      dict_of_2D_imgs.update({cam_name : np.array(sim_img_response.image_data_float).reshape(height, width)})
-
-    # customized to get a panoramic image w/ given camera orientations
-    composite_img = np.concatenate([ dict_of_2D_imgs[cam_names[3]][:, int((2*width/5))::],
-                                     dict_of_2D_imgs[cam_names[0]][:,int((2*width/5))::],
-                                     dict_of_2D_imgs[cam_names[1]],
-                                     dict_of_2D_imgs[cam_names[2]][:,0:int((3*width/5))],
-                                     dict_of_2D_imgs[cam_names[3]][:,0:int((3*width/5))] ], axis=1)
+    composite_img = np.concatenate([preprocessed_individual_imgs[0][int(3*height/7)::,int((2*width/5))::],
+                                                  preprocessed_individual_imgs[1][int(3*height/7)::,:],
+                                                  preprocessed_individual_imgs[2][int(3*height/7)::,0:int((3*width/5))]], axis=1)
 
     # for debugging and getting cameras right
-    #airsim.write_png(os.path.normpath('sim_img'+ str(time.time())+'.png'), composite_img)
+    #cv2.imwrite('{}.jpg'.format(time.time()), composite_img)
 
     return composite_img
 
