@@ -23,8 +23,8 @@ env = AirSimEnv()
 num_steering_angles = env.action_space.n
 
 
-random.seed(33333)
-np.random.seed(33333)
+random.seed(3333233)
+np.random.seed(3333233)
 
 INPUT_SHAPE = (260-int(3*260/7), 770) # H x W (no channels because assume DepthPlanner)
 WINDOW_LENGTH = 5  # reward_delay * this = prev sec as input
@@ -45,13 +45,13 @@ model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
 model.add(Flatten())
+model.add(Dense(136, activity_regularizer=l2(0.03)))
+model.add(Activation('elu'))
+
 model.add(Dense(140, activity_regularizer=l2(0.03)))
 model.add(Activation('elu'))
 
 model.add(Dense(144, activity_regularizer=l2(0.03)))
-model.add(Activation('elu'))
-
-model.add(Dense(148, activity_regularizer=l2(0.03)))
 model.add(Activation('elu'))
 
 model.add(Dense(num_steering_angles))
@@ -79,14 +79,19 @@ ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| 
 
 weights_filename = 'ddqn_collision_avoidance_1108.h5'
 want_to_train = True
+train_from_weights_in_weights_filename = True
 
 if want_to_train is True:
   num_total_training_steps = 10**5
 
   # note: interval's units are episode_steps
   callbacks_list = [ModelIntervalCheckpoint(filepath=weights_filename, verbose=5, interval=1000)]
+
+  if train_from_weights_in_weights_filename:
+    ddqn_agent.load_weights(weights_filename)
+    
   ddqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
-                visualize=False, verbose=2)
+                      visualize=False, verbose=2)
 
   ddqn_agent.save_weights(weights_filename)
 else: # else want to test

@@ -46,7 +46,7 @@ class AirSimEnv(gym.Env):
                                            manual_gear=1)
     self.reward_delay = 0.2  # real-life seconds
     self.episode_step_count = 1.0  # 1.0 so that 
-    self.steps_per_episode = (1/self.reward_delay) *  180 # right hand num is in in-game seconds 
+    self.steps_per_episode = (1/self.reward_delay) *  300 # right hand num is in in-game seconds 
     
     self.collisions_in_a_row = 0
     self.too_many_collisions_in_a_row = 15 # note: if stuck, then collisions will keep piling on
@@ -217,7 +217,7 @@ class AirSimEnv(gym.Env):
       total_distance_contrib = w_dist * (1 / (1 + math.exp(exponent)))
 
       # slight reward for steering straight, i.e., only turn if necessary in long term
-      w_non0_steering = 0.125
+      w_non0_steering = 0.015
       steering_contrib = w_non0_steering * (1 -abs(self.car_controls.steering))
 
       w_steps = 1.0 - w_non0_steering - w_dist
