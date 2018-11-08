@@ -29,6 +29,7 @@ import time
 import random
 import os
 import cv2
+import math
 
 
 class AirSimEnv(gym.Env):
@@ -42,9 +43,9 @@ class AirSimEnv(gym.Env):
                                            steering=0.0,
                                            is_manual_gear=True,
                                            manual_gear=1)
-    self.reward_delay = 0.05  # real-life seconds
+    self.reward_delay = 0.2  # real-life seconds
     self.episode_step_count = 1.0  # 1.0 so that 
-    self.steps_per_episode = (1/self.reward_delay) *  120 # right hand num is in in-game seconds 
+    self.steps_per_episode = (1/self.reward_delay) *  180 # right hand num is in in-game seconds 
     
     self.collisions_in_a_row = 0
     self.too_many_collisions_in_a_row = 15 # note: if stuck, then collisions will keep piling on
@@ -53,6 +54,10 @@ class AirSimEnv(gym.Env):
     self.client = airsim.CarClient()
     self.client.confirmConnection()
     self.client.enableApiControl(True)
+
+    self.distance_travelled = 0.0
+    self.previous_x_coord = None  # init'd in reset(self)
+    self.previous_y_coord = None
 
     self.left_cam_name = '2'
     self.right_cam_name = '1'
@@ -117,6 +122,14 @@ class AirSimEnv(gym.Env):
 
     self.client.simPause(True)  # pause to do backend stuff
 
+    current_x = car_info.kinematics_estimated.position.x_val
+    current_y = car_info.kinematics_estimated.position.y_val
+    # z is down+ and up-, so not need
+
+    # euclidean distance since last step
+    self.distance_travelled += math.sqrt( (current_x - self.previous_x_coord)**2 \
+                                         +(current_y - self.previous_y_coord)**2 )
+
     reward = self._get_reward(collision_info, car_info)
 
     # potential probelm of getting stuck, so track number of collisions in a row w/ same obj
@@ -146,6 +159,9 @@ class AirSimEnv(gym.Env):
       self.obj_id_of_last_collision = -123456789
       done = True
 
+    self.previous_x_coord = current_x
+    self.previous_y_coord = current_y
+    
     return state_t2, reward, done, {}
 
   def reset(self):
@@ -161,6 +177,9 @@ class AirSimEnv(gym.Env):
     
     self.client.simSetVehiclePose(pose=reset_pose,
                                   ignore_collison=True)
+    self.distance_travelled = 0.0
+    self.previous_x_coord = reset_pose.position.x_val
+    self.previous_y_coord = reset_pose.position.y_val
     
     self.episode_start_time = time.time()
     self.client.simPause(False)
@@ -191,10 +210,24 @@ class AirSimEnv(gym.Env):
        (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0):  #-1 if not currently colliding
       return -1.0
     else:
-      # linear reward increase as time increase - might be necessary
-      # because want episodes to play out fully, not terminate early,
-      # i.e., you want car to make moves that get it stuck or something
-      return self.episode_step_count / self.steps_per_episode  
+      # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
+      w_dist = 0.65
+      exponent = -1*(math.sqrt(0.15*self.distance_travelled) - (10*w_dist))  # @ 0.15*dist_trav: hit 0.6 reward @ 500units
+      total_distance_contrib = w_dist * (1 / (1 + math.exp(exponent)))
+
+      # slight reward for steering straight, i.e., only turn if necessary in long term
+      w_non0_steering = 0.1
+      steering_contrib = w_non0_steering * math.cos(self.car_controls.steering)
+
+      w_steps = 1.0 - w_non0_steering - w_dist
+      step_contrib = w_steps * (self.episode_step_count / self.steps_per_episode)
+      
+
+      # NOTE: w_dist + w_non0_steering + w_steps  <= 1
+                                   
+      return total_distance_contrib + steering_contrib + step_contrib
+
+  
     
   def _get_environment_state(self):
     """

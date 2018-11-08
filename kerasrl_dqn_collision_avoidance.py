@@ -21,23 +21,21 @@ env = AirSimEnv()
 num_steering_angles = env.action_space.n
 
 
-random.seed(32314)
-np.random.seed(31234)
+random.seed(33333)
+np.random.seed(33333)
 
 INPUT_SHAPE = (260-int(3*260/7), 770) # H x W (no channels because assume DepthPlanner)
-WINDOW_LENGTH = 3
+WINDOW_LENGTH = 5
 input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(128, kernel_size=3, strides=2 ,activation='relu',
+model.add(Conv2D(96, kernel_size=5, strides=4 ,activation='relu',
                  input_shape=input_shape, data_format = 'channels_first'))
-model.add(Conv2D(160, kernel_size=3, strides=2,  activation='relu'))
-model.add(Conv2D(192, kernel_size=3, strides=2,  activation='relu'))
-model.add(Conv2D(192, kernel_size=3, strides=1,  activation='relu'))
+model.add(Conv2D(128, kernel_size=5, strides=4,  activation='relu'))
+
 model.add(Flatten())
-model.add(Dense(160, activation='elu'))
-model.add(Dense(192, activation='elu'))
-model.add(Dense(224, activation='elu'))
+model.add(Dense(96, activation='sigmoid'))
+model.add(Dense(128, activation='sigmoid'))
 model.add(Dense(num_steering_angles, activation='linear'))
 print(model.summary())
 
@@ -61,7 +59,7 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
 
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1101.h5'
+weights_filename = 'ddqn_collision_avoidance_1107.h5'
 want_to_train = True
 
 if want_to_train is True:
