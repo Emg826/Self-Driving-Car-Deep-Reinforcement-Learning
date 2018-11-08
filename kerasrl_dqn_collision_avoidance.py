@@ -25,7 +25,7 @@ random.seed(33333)
 np.random.seed(33333)
 
 INPUT_SHAPE = (260-int(3*260/7), 770) # H x W (no channels because assume DepthPlanner)
-WINDOW_LENGTH = 5
+WINDOW_LENGTH = 5  # reward_delay * this = prev sec as input
 input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 
 model = Sequential()

@@ -79,14 +79,12 @@ class AirSimEnv(gym.Env):
                                               airsim.Quaternionr(0,0,.02,1.0)),   # checked
                                    airsim.Pose(airsim.Vector3r(-138.292, -7.577, -0.7),
                                                    airsim.Quaternionr(0.0, 0.0, 0.002, 1.0)),
-                                   airsim.Pose(airsim.Vector3r(68.873, 160.916, -1.05),
+                                   airsim.Pose(airsim.Vector3r(67.873, 160.916, -1.05),
                                                    airsim.Quaternionr(0.0, 0.0, -.7, 0.714)),
                                    airsim.Pose(airsim.Vector3r(55.514, -310.598, -1.05),
                                                    airsim.Quaternionr(0.0, 0.0, .707, .707)),
                                    airsim.Pose(airsim.Vector3r(64.665, -352.195, -1.05),
                                                    airsim.Quaternionr(0.0, 0.0, .717, .697)),
-                                   airsim.Pose(airsim.Vector3r(219.288, 201.129, -1.05),
-                                                   airsim.Quaternionr(0.0, 0.0, -.383, .924)),
                                    airsim.Pose(airsim.Vector3r(67.507, 234.912, -1.05),
                                                    airsim.Quaternionr(0.0, 0.0, -.7, 0.715))]
 
