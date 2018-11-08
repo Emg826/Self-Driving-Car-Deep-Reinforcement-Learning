@@ -1,13 +1,15 @@
 """https://github.com/keras-rl/keras-rl/blob/master/examples/dqn_cartpole.py"""
 """https://github.com/Kjell-K/AirGym/blob/master/DQN-Train.py"""
+"""https://stackoverflow.com/questions/34716454/where-do-i-call-the-batchnormalization-function-in-keras"""
 
 
 import numpy as np
 import random
 
 from keras.models import Sequential
-from keras.layers import Dense, MaxPooling2D, Flatten, Conv2D, BatchNormalization, Conv3D,MaxPooling3D
+from keras.layers import Dense, MaxPooling2D, Flatten, Conv2D, BatchNormalization, Activation
 from keras.optimizers import Adam
+from keras.regularizers import l2
 
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
@@ -29,14 +31,30 @@ WINDOW_LENGTH = 5  # reward_delay * this = prev sec as input
 input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(96, kernel_size=5, strides=4 ,activation='relu',
+model.add(Conv2D(128, kernel_size=3, strides=2,
                  input_shape=input_shape, data_format = 'channels_first'))
-model.add(Conv2D(128, kernel_size=5, strides=4,  activation='relu'))
+model.add(BatchNormalization())
+model.add(Activation('sigmoid'))
+
+model.add(Conv2D(132, kernel_size=3, strides=2))
+model.add(BatchNormalization())
+model.add(Activation('sigmoid'))
+
+model.add(Conv2D(136, kernel_size=4, strides=3))
+model.add(BatchNormalization())
+model.add(Activation('sigmoid'))
 
 model.add(Flatten())
-model.add(Dense(96, activation='sigmoid'))
-model.add(Dense(128, activation='sigmoid'))
-model.add(Dense(num_steering_angles, activation='linear'))
+model.add(Dense(140, activity_regularizer=l2(0.03)))
+model.add(Activation('elu'))
+
+model.add(Dense(144, activity_regularizer=l2(0.03)))
+model.add(Activation('elu'))
+
+model.add(Dense(148, activity_regularizer=l2(0.03)))
+model.add(Activation('elu'))
+
+model.add(Dense(num_steering_angles))
 print(model.summary())
 
 
@@ -59,7 +77,7 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
 
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1107.h5'
+weights_filename = 'ddqn_collision_avoidance_1108.h5'
 want_to_train = True
 
 if want_to_train is True:

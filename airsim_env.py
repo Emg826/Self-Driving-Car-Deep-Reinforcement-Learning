@@ -30,6 +30,7 @@ import random
 import os
 import cv2
 import math
+import queue
 
 
 class AirSimEnv(gym.Env):
@@ -55,9 +56,10 @@ class AirSimEnv(gym.Env):
     self.client.confirmConnection()
     self.client.enableApiControl(True)
 
+    # major problem: car drives around in circle; need space out distance travelled
     self.distance_travelled = 0.0
-    self.previous_x_coord = None  # init'd in reset(self)
-    self.previous_y_coord = None
+    self.coords_offset = 10  # num steps ago to calculate distance travelled
+    self.coords_queue = queue.Queue(self.coords_offset)  # stores (x, y) coordinate tuples
 
     self.left_cam_name = '2'
     self.right_cam_name = '1'
@@ -125,8 +127,11 @@ class AirSimEnv(gym.Env):
     # z is down+ and up-, so not need
 
     # euclidean distance since last step
-    self.distance_travelled += math.sqrt( (current_x - self.previous_x_coord)**2 \
-                                         +(current_y - self.previous_y_coord)**2 )
+    if self.coords_queue.full(): # only get when full bcuz want larger distance over time
+      past_x, past_y = self.coords_queue.get()
+      self.distance_travelled += math.sqrt( (current_x - past_x)**2 \
+                                                       +(current_y - past_y)**2 )
+    self.coords_queue.put( (current_x, current_y) )
 
     reward = self._get_reward(collision_info, car_info)
 
@@ -156,9 +161,6 @@ class AirSimEnv(gym.Env):
       self.collisions_in_a_row = 0
       self.obj_id_of_last_collision = -123456789
       done = True
-
-    self.previous_x_coord = current_x
-    self.previous_y_coord = current_y
     
     return state_t2, reward, done, {}
 
@@ -176,8 +178,9 @@ class AirSimEnv(gym.Env):
     self.client.simSetVehiclePose(pose=reset_pose,
                                   ignore_collison=True)
     self.distance_travelled = 0.0
-    self.previous_x_coord = reset_pose.position.x_val
-    self.previous_y_coord = reset_pose.position.y_val
+
+    while not self.coords_queue.empty():  # clear the queue
+      _ = self.coords_queue.get()
     
     self.episode_start_time = time.time()
     self.client.simPause(False)
@@ -210,23 +213,18 @@ class AirSimEnv(gym.Env):
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
       w_dist = 0.65
-      exponent = -1*(math.sqrt(0.15*self.distance_travelled) - (10*w_dist))  # @ 0.15*dist_trav: hit 0.6 reward @ 500units
+      exponent = -1* math.sqrt(0.175*self.distance_travelled) + (10*w_dist)  # @ 0.15*dist_trav: hit 0.6 reward @ 500units
       total_distance_contrib = w_dist * (1 / (1 + math.exp(exponent)))
 
       # slight reward for steering straight, i.e., only turn if necessary in long term
-      w_non0_steering = 0.1
-      steering_contrib = w_non0_steering * math.cos(self.car_controls.steering)
+      w_non0_steering = 0.125
+      steering_contrib = w_non0_steering * (1 -abs(self.car_controls.steering))
 
       w_steps = 1.0 - w_non0_steering - w_dist
-      step_contrib = w_steps * (self.episode_step_count / self.steps_per_episode)
-      
-
-      # NOTE: w_dist + w_non0_steering + w_steps  <= 1
-                                   
+      step_contrib = w_steps * min(1.0, (self.episode_step_count / self.steps_per_episode)**2)
+                   
       return total_distance_contrib + steering_contrib + step_contrib
 
-  
-    
   def _get_environment_state(self):
     """
     Get state of the environment and the vehicle in the environment.
