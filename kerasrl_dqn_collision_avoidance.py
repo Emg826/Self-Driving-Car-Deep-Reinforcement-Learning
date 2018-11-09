@@ -16,12 +16,10 @@ from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
 from rl.memory import SequentialMemory
 from rl.callbacks import ModelIntervalCheckpoint  # https://github.com/keras-rl/keras-rl/blob/171667dce2a39993705b12fdf0b3cc3bb7bf26d2/rl/callbacks.py
 
-
 from airsim_env import AirSimEnv
 
 env = AirSimEnv()
 num_steering_angles = env.action_space.n
-
 
 random.seed()
 np.random.seed()
@@ -31,27 +29,20 @@ WINDOW_LENGTH = 8  # reward_delay * this = prev sec as input
 input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(128, kernel_size=3, strides=2,
+model.add(Conv2D(64, kernel_size=5, strides=4,
                  input_shape=input_shape, data_format = 'channels_first'))
 model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
-model.add(Conv2D(132, kernel_size=3, strides=2))
-model.add(BatchNormalization())
-model.add(Activation('sigmoid'))
-
-model.add(Conv2D(136, kernel_size=4, strides=3))
+model.add(Conv2D(128, kernel_size=4, strides=3))
 model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
 model.add(Flatten())
-model.add(Dense(136, activity_regularizer=l2(0.03)))
+model.add(Dense(128, activity_regularizer=l2(0.03)))
 model.add(Activation('elu'))
 
-model.add(Dense(140, activity_regularizer=l2(0.03)))
-model.add(Activation('elu'))
-
-model.add(Dense(144, activity_regularizer=l2(0.03)))
+model.add(Dense(160, activity_regularizer=l2(0.03)))
 model.add(Activation('elu'))
 
 model.add(Dense(num_steering_angles))
@@ -66,7 +57,7 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               attr='eps',
                               value_max=1.0,
                               value_min=-1.0, # clip rewards just like in dqn paper
-                              value_test=0.001,
+                              value_test=0.0001,  # when testing, take rand action this val *100 % of time
                               nb_steps=10**5) # of steps until eps is value_test?
 
 

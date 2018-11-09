@@ -49,7 +49,7 @@ class AirSimEnv(gym.Env):
     self.steps_per_episode = (1/self.reward_delay) *  300 # right hand num is in in-game seconds 
     
     self.collisions_in_a_row = 0
-    self.too_many_collisions_in_a_row = 15 # note: if stuck, then collisions will keep piling on
+    self.too_many_collisions_in_a_row = 12 # note: if stuck, then collisions will keep piling on
     self.obj_id_of_last_collision = -123456789  # anything <-1 is unassociated w/ an obj in sim (afaik)
     
     self.client = airsim.CarClient()
@@ -58,7 +58,10 @@ class AirSimEnv(gym.Env):
 
     # major problem: car drives around in circle; need space out distance travelled
     self.distance_travelled = 0.0
-    self.coords_offset = 25  # num steps ago to calculate distance travelled
+
+    # right num can be thought of as in game seconds
+    self.coords_offset = (1/self.reward_delay)*3  # num steps ago to calculate distance travelled from 
+
     self.coords_queue = queue.Queue(self.coords_offset)  # stores (x, y) coordinate tuples
 
     self.left_cam_name = '2'
@@ -77,7 +80,7 @@ class AirSimEnv(gym.Env):
                                               airsim.Quaternionr(0,0,1.0,.01)),  # checked
                                   airsim.Pose(airsim.Vector3r(229,-313,-.7),
                                               airsim.Quaternionr(0,0,-.73,.69)),   # checked
-                                  airsim.Pose(airsim.Vector3r(-700,-4,-.7),
+                                  airsim.Pose(airsim.Vector3r(-710,-4,-.7),
                                               airsim.Quaternionr(0,0,.02,1.0)),   # checked
                                    airsim.Pose(airsim.Vector3r(-138.292, -7.577, -0.7),
                                                    airsim.Quaternionr(0.0, 0.0, 0.002, 1.0)),
@@ -157,9 +160,6 @@ class AirSimEnv(gym.Env):
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
        car_info.speed > 40.0 or \
        self.collisions_in_a_row > self.too_many_collisions_in_a_row:
-      self.episode_step_count = 1.0
-      self.collisions_in_a_row = 0
-      self.obj_id_of_last_collision = -123456789
       done = True
     
     return state_t2, reward, done, {}
@@ -181,6 +181,10 @@ class AirSimEnv(gym.Env):
 
     while not self.coords_queue.empty():  # clear the queue
       _ = self.coords_queue.get()
+
+    self.episode_step_count = 1.0
+    self.collisions_in_a_row = 0
+    self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
     
     self.episode_start_time = time.time()
     self.client.simPause(False)
@@ -212,21 +216,20 @@ class AirSimEnv(gym.Env):
       return -1.0
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.7
-      exponent = -1* math.sqrt(0.175*self.distance_travelled) + (10*w_dist)  # @ 0.15*dist_trav: hit 0.6 reward @ 500units
-      total_distance_contrib = w_dist * (1 / (1 + math.exp(exponent)))
+      w_dist = 0.95
+      assert w_dist <= 1.0
+
+      exponent =  math.sqrt(0.175*self.distance_travelled) + (10*w_dist)  # @ 0.15*dist_trav: hit 0.6 reward @ 500units
+      total_distance_contrib = w_dist * (1 / (1 + math.exp(-exponent)))
 
       # slight reward for steering straight, i.e., only turn if necessary in long term
-      w_non0_steering = 0.03
-      steering_contrib = w_non0_steering * (1 -abs(self.car_controls.steering))
+      w_non0_steering = 1.0-w_dist
 
-      w_steps = 1.0 - w_non0_steering - w_dist
+      # note: steering [-1, 1], so w/ 5 steering angles, have: {-1., -0.5, 0., .5, 1.}
+      # this means the decrease in reward (never penalty though) is linear deviate from 0. steering
+      steering_contrib = w_non0_steering * (1 - abs(self.car_controls.steering))
 
-      assert math.fsum([w_steps , w_non0_steering , w_dist]) == 1.0
-      
-      step_contrib = w_steps * min(1.0, (self.episode_step_count / self.steps_per_episode)**2)
-                   
-      return total_distance_contrib + steering_contrib + step_contrib
+      return total_distance_contrib + steering_contrib
 
   def _get_environment_state(self):
     """
