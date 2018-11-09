@@ -27,7 +27,7 @@ random.seed()
 np.random.seed()
 
 INPUT_SHAPE = (260-int(3*260/7), 770) # H x W (no channels because assume DepthPlanner)
-WINDOW_LENGTH = 10  # reward_delay * this = prev sec as input
+WINDOW_LENGTH = 8  # reward_delay * this = prev sec as input
 input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 
 model = Sequential()
@@ -90,8 +90,9 @@ if want_to_train is True:
   if train_from_weights_in_weights_filename:
     try:
       ddqn_agent.load_weights(weights_filename)
+      print('Successfully loaded DDQN weights')
     except:
-      print('Did not load weights')
+      print('Failed to load DDQN weights')
     
   ddqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
                       visualize=False, verbose=2)

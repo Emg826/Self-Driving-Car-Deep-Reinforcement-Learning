@@ -77,7 +77,7 @@ class AirSimEnv(gym.Env):
                                               airsim.Quaternionr(0,0,1.0,.01)),  # checked
                                   airsim.Pose(airsim.Vector3r(229,-313,-.7),
                                               airsim.Quaternionr(0,0,-.73,.69)),   # checked
-                                  airsim.Pose(airsim.Vector3r(-750,-4,-.7),
+                                  airsim.Pose(airsim.Vector3r(-700,-4,-.7),
                                               airsim.Quaternionr(0,0,.02,1.0)),   # checked
                                    airsim.Pose(airsim.Vector3r(-138.292, -7.577, -0.7),
                                                    airsim.Quaternionr(0.0, 0.0, 0.002, 1.0)),
