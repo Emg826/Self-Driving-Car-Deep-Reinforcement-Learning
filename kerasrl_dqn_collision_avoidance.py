@@ -23,11 +23,11 @@ env = AirSimEnv()
 num_steering_angles = env.action_space.n
 
 
-random.seed(3333233)
-np.random.seed(3333233)
+random.seed()
+np.random.seed()
 
 INPUT_SHAPE = (260-int(3*260/7), 770) # H x W (no channels because assume DepthPlanner)
-WINDOW_LENGTH = 5  # reward_delay * this = prev sec as input
+WINDOW_LENGTH = 10  # reward_delay * this = prev sec as input
 input_shape = (WINDOW_LENGTH,) + INPUT_SHAPE
 
 model = Sequential()
@@ -66,7 +66,7 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               attr='eps',
                               value_max=1.0,
                               value_min=-1.0, # clip rewards just like in dqn paper
-                              value_test=0.025,
+                              value_test=0.001,
                               nb_steps=10**5) # of steps until eps is value_test?
 
 
@@ -77,7 +77,7 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
 
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1108.h5'
+weights_filename = 'ddqn_collision_avoidance_1109.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 
@@ -88,7 +88,10 @@ if want_to_train is True:
   callbacks_list = [ModelIntervalCheckpoint(filepath=weights_filename, verbose=5, interval=1000)]
 
   if train_from_weights_in_weights_filename:
-    ddqn_agent.load_weights(weights_filename)
+    try:
+      ddqn_agent.load_weights(weights_filename)
+    except:
+      print('Did not load weights')
     
   ddqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
                       visualize=False, verbose=2)

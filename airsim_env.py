@@ -40,7 +40,7 @@ class AirSimEnv(gym.Env):
     num_steering_angles = 5
     self.action_space = spaces.Discrete(num_steering_angles)
     self.action_space_steering = np.linspace(-1.0, 1.0, num_steering_angles).tolist()
-    self.car_controls = airsim.CarControls(throttle=0.5125,
+    self.car_controls = airsim.CarControls(throttle=0.55,
                                            steering=0.0,
                                            is_manual_gear=True,
                                            manual_gear=1)
@@ -58,7 +58,7 @@ class AirSimEnv(gym.Env):
 
     # major problem: car drives around in circle; need space out distance travelled
     self.distance_travelled = 0.0
-    self.coords_offset = 10  # num steps ago to calculate distance travelled
+    self.coords_offset = 25  # num steps ago to calculate distance travelled
     self.coords_queue = queue.Queue(self.coords_offset)  # stores (x, y) coordinate tuples
 
     self.left_cam_name = '2'
@@ -77,7 +77,7 @@ class AirSimEnv(gym.Env):
                                               airsim.Quaternionr(0,0,1.0,.01)),  # checked
                                   airsim.Pose(airsim.Vector3r(229,-313,-.7),
                                               airsim.Quaternionr(0,0,-.73,.69)),   # checked
-                                  airsim.Pose(airsim.Vector3r(-800,-4,-.7),
+                                  airsim.Pose(airsim.Vector3r(-750,-4,-.7),
                                               airsim.Quaternionr(0,0,.02,1.0)),   # checked
                                    airsim.Pose(airsim.Vector3r(-138.292, -7.577, -0.7),
                                                    airsim.Quaternionr(0.0, 0.0, 0.002, 1.0)),
@@ -212,15 +212,18 @@ class AirSimEnv(gym.Env):
       return -1.0
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.65
+      w_dist = 0.7
       exponent = -1* math.sqrt(0.175*self.distance_travelled) + (10*w_dist)  # @ 0.15*dist_trav: hit 0.6 reward @ 500units
       total_distance_contrib = w_dist * (1 / (1 + math.exp(exponent)))
 
       # slight reward for steering straight, i.e., only turn if necessary in long term
-      w_non0_steering = 0.015
+      w_non0_steering = 0.03
       steering_contrib = w_non0_steering * (1 -abs(self.car_controls.steering))
 
       w_steps = 1.0 - w_non0_steering - w_dist
+
+      assert math.fsum([w_steps , w_non0_steering , w_dist]) == 1.0
+      
       step_contrib = w_steps * min(1.0, (self.episode_step_count / self.steps_per_episode)**2)
                    
       return total_distance_contrib + steering_contrib + step_contrib
