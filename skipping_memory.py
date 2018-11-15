@@ -15,15 +15,15 @@ class SkippingMemory():
   after the SequentialMemory class from v0.4.2
   """
 
-  def __init__(self, limit, num_states_in_window, skip_factor):
+  def __init__(self, limit, num_states_to_stack, skip_factor):
     """
     :param limit: max number of states to store in memory
-    :param num_states_in_window: number of states to stack
+    :param num_states_to_stack: number of states to stack
     :param skip_factor: only stack every skip_factor-th state; skip_factor=1 is
     the same as SequentialMemory, i.e., no states are skipped and
-    num_states_in_window is equivalent to window_length
+    num_states_to_stack is equivalent to window_length
     """
-    self.num_states_in_window = num_states_in_window
+    self.num_states_to_stack = num_states_to_stack
     self.limit = limit
     self.num_observations = 0
 
@@ -38,7 +38,8 @@ class SkippingMemory():
 
   def sample(self, batch_size, batch_idxs=None):
     """
-    Get a random batch of size batch_size from "memory"
+    Get a random batch of size batch_size from "memory". Note, this is somewhat
+    inefficient since could note where episode split is
 
     :param batch_size: size of mini batch to sample
     :param batch_idxs: ignored; is here only because keras-rl requires this
@@ -47,62 +48,44 @@ class SkippingMemory():
     :returns: list of transitions of the form
     """
     num_entries = self.nb_entries
-    assert num_entries >= (self.num_states_in_window * self.skip_factor)
+    assert num_entries-1 >= (self.num_states_to_stack * self.skip_factor)
 
     # note: note sampling samples consecutively, literally just
     # drawing batch_size number of indicies w/out replacement (as per keras-rl
     # implementation)
-    sample_indices = sample(range(self.num_states_in_window*self.skip_factor-1,
-                                  num_entries-1),
-                            size=batch_size)
+    sample_idx_range == range(0, num_entries-1)
 
     experiences = []
-    # note sample_idx=t, so state_t+1 is located @ (sample_idx+1 % num_entries)
-    # question: do i also apply skips to the statet+1 idx? i'd say no.
-    for sample_idx in sample_indices:
-      # 1. see if terminal idx in any of previous indices (need to check in
-      # between skips just in case episode on a transition that is not stacked)
-      attempts_at_new_valid_idx = 0
-      max_num_retries_at_valid_idx = 10
-      if episode terminates between last stack state and state_t+1
-      # note: 2 cases, statet+1 is new episode, and somewhere b4 state_t but
-      # after last-most stacked state is new episode
-      while attempts_at_new_valid_idx < max_num_retries_at_valid_idx:
-      # 2.
+    sample_idx = None
+    while len(experiences) < batch_size:
+      # 1.  Get a random index
+      if sample_idx is None:
+        sample_idx = sample(sample_idx_range, size=1)
+      # else: already have sample_idx from previous iteration
 
+      # 2. if sample is terminal, i.e., next state is in diff epsidoe
+      if self.terminals[sample_idx]:
+        sample_idx = (sample_idx - 1) % num_entries
+        continue
 
+      # 3. Check if this is a terminating transition or if there is a
+      # terminating transition anywhere in this window's past
+      termination_within_window, idx_of_terminal = self._termination_within_window(sample_idx)
+      if termination_within_window:
+        sample_idx = None  # not going to sample_idx - idx_of_terminal in
+        continue
+        # case could get stuck in loop of resetting to same sample indicies
 
-    end_idx_of_batch = randint(0+,
-                               num_entries-1)
-    sample_count = 0
-    experiences = []
-
-    while sample_count < batch_size:
-
-
-    # note: this way, end idx can be > self.limit; handle this in list
-    # comprehension by % num_entries
-
-    sample_end_idx = sample_start_idx + self.num_states_in_window * self.skip_factor
-
-    batch_idxs = [idx % num_entries for idx in range(sample_start_idx,
-                                                     sample_end_idx,
-                                                     self.skip_factor)]
-
-    experiences = []  # transitions, list of 'Experience' tuples
-
-    # time step t is terminal, then for state_t+1, just use state_t for simplicity
-    # note: i don't think this actually matters for deep Q learning since
-    # phi_t+1/state_t+1 would only be used in calculating reward and even then,
-    # only when not in terminal state (if terminal, then target is r_t)
-      # note, what i did is not good enough
-
-
-    # 2 edge cases: wrap around at last insert (since last insert and then idx
-    # right after that are 2 different episdoes) and wrap around at end of list
-
-    # problem: since skipping indices, what if stack state from prev episode?
-
+      # 4. Build Experience tuple
+      t_idx = sample_idx
+      stack_t_indices = 0
+      stack_t_indices = 1
+      experiences.append(Experience(state0=self.states[stack_t_indices],
+                                    action=self.actions[t_idx],
+                                    reward=self.rewards[t_idx],
+                                    state1=self.states[stack_t_indices],
+                                    terminal1=self.terminals[t_idx]))
+      sample_idx = None  # signals successful sampling, so need new rand idx
 
 
 
@@ -142,6 +125,29 @@ class SkippingMemory():
     Return the configurations of SkippingMemory, as per this function in
     SequentialMemory class.
     """
-    return {'window_length': self.num_states_in_window,
+    return {'window_length': self.num_states_to_stack,
             'ignore_episode_boundaries': False,
             'limit': self.limit}
+
+  def _termination_within_window(self, sample_idx):
+    """
+    Check if there are any terminal transitions in window of sample_idx
+
+    :param sample_idx: idx of state_t you are sampling
+    :returns: tuple: False if termination in window, else True;
+                     idx of episode termination
+    """
+    num_entries = self.nb_entries
+
+    # can be negative; handle w/ % in
+    lower_idx = sample_idx - self.num_states_to_stack * self.skip_factor
+
+    indices_in_window = [idx % num_entries for idx in range(lower_idx, sample_idx)]
+
+    # for each idx in window (including indices not going to be stacked),
+    # check if terminal
+    for idx in indices_in_window:
+      if self.terminals[idx] is True:
+        return True, idx
+
+    return False, None
