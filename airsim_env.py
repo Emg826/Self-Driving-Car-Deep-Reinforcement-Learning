@@ -3,7 +3,7 @@ Based on:
 https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
 """
 
-""" For settings.json
+""" Copy and paste this into your settings.json (which hould be in your Documents folder)
 
 {
   "SettingsVersion": 1.2,
@@ -21,8 +21,7 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
 
 """
 
-import gym
-from gym import spaces
+from gym import spaces, Env
 import airsim
 import numpy as np
 import time
@@ -33,7 +32,7 @@ import math
 import queue
 
 
-class AirSimEnv(gym.Env):
+class AirSimEnv(Env):
   """Keras-rl usable gym (an openai package)"""
 
   def __init__(self):
