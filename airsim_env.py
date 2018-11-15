@@ -24,44 +24,48 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
 from gym import spaces, Env
 import airsim
 import numpy as np
-import time
 import random
 import os
 import cv2
 import math
 import queue
+import time # just to check steps per second 
+
 
 
 class AirSimEnv(Env):
   """Keras-rl usable gym (an openai package)"""
 
-  def __init__(self):
-    num_steering_angles = 5
+  def __init__(self, num_steering_angles, max_num_steps_in_episode, time_steps_between_dist_calc):
+    # steering stuff
     self.action_space = spaces.Discrete(num_steering_angles)
     self.action_space_steering = np.linspace(-1.0, 1.0, num_steering_angles).tolist()
     self.car_controls = airsim.CarControls(throttle=0.55,
-                                           steering=0.0,
-                                           is_manual_gear=True,
-                                           manual_gear=1)
-    self.reward_delay = 0.2  # real-life seconds
-    self.episode_step_count = 1.0  # 1.0 so that
-    self.steps_per_episode = (1/self.reward_delay) *  300 # right hand num is in in-game seconds
+                                                       steering=0.0,
+                                                       is_manual_gear=True,
+                                                       manual_gear=1)
 
+    # in-sim episode handling
+    self.episode_step_count = 0
+    self.steps_per_episode = max_num_steps_in_episode # right hand num is in in-game seconds
+
+    # collision info for emergency resets and reward func calc
     self.collisions_in_a_row = 0
-    self.too_many_collisions_in_a_row = 12 # note: if stuck, then collisions will keep piling on
+    self.too_many_collisions_in_a_row = 15 # note: if stuck, then collisions will keep piling on
     self.obj_id_of_last_collision = -123456789  # anything <-1 is unassociated w/ an obj in sim (afaik)
 
+    # connect to the client; we're ready to connect to set up our cameras
     self.client = airsim.CarClient()
     self.client.confirmConnection()
     self.client.enableApiControl(True)
 
     # major problem: car drives around in circle; need space out distance travelled
     self.distance_travelled = 0.0
-
-    # right num can be thought of as in game seconds
-    self.coords_offset = (1/self.reward_delay)*3  # num steps ago to calculate distance travelled from
-
+    self.coords_offset = time_steps_between_dist_calc  # num steps ago to calculate distance travelled from
     self.coords_queue = queue.Queue(self.coords_offset)  # stores (x, y) coordinate tuples
+
+    self.time_since_ep_start = 2**31  # only used for debug and steps/second measurement,
+    # not for tracking progress in sim; note: sim steps per real life seconds is ~6
 
     self.left_cam_name = '2'
     self.right_cam_name = '1'
@@ -114,7 +118,6 @@ class AirSimEnv(Env):
     self.client.simPause(False)  # unpause AirSim
 
     self.client.setCarControls(self.car_controls)
-    time.sleep(self.reward_delay)
 
     # reward_t
     collision_info = self.client.simGetCollisionInfo()
@@ -161,6 +164,13 @@ class AirSimEnv(Env):
        self.collisions_in_a_row > self.too_many_collisions_in_a_row:
       done = True
 
+    self.episode_step_count += 1
+
+
+    # for debug
+    #if self.episode_step_count % 30 == 0:
+    #  print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
+    #                                                                              (self.episode_step_count / (time.time() -self.time_since_ep_start))))
     return state_t2, reward, done, {}
 
   def reset(self):
@@ -181,12 +191,12 @@ class AirSimEnv(Env):
     while not self.coords_queue.empty():  # clear the queue
       _ = self.coords_queue.get()
 
-    self.episode_step_count = 1.0
+    self.episode_step_count = 0
     self.collisions_in_a_row = 0
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
 
-    self.episode_start_time = time.time()
     self.client.simPause(False)
+    self.time_since_ep_start = time.time()  # again, for debug purposes 
 
     return self._get_environment_state() # just to have an initial state?
 

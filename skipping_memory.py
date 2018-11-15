@@ -4,7 +4,7 @@ https://github.com/keras-rl/keras-rl/blob/ac1439e7029b7d514aca53d3eecec5f64193d9
 https://github.com/keras-rl/keras-rl/blob/master/rl/memory.py
 https://github.com/keras-rl/keras-rl/blob/master/rl/policy.py
 https://docs.python.org/2/library/collections.html#collections.deque
-""""
+"""
 
 from rl.memory import Memory, sample_batch_indexes
 from collections import namedtuple, deque # pronounced "deck"
