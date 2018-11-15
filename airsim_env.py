@@ -45,13 +45,13 @@ class AirSimEnv(gym.Env):
                                            is_manual_gear=True,
                                            manual_gear=1)
     self.reward_delay = 0.2  # real-life seconds
-    self.episode_step_count = 1.0  # 1.0 so that 
-    self.steps_per_episode = (1/self.reward_delay) *  300 # right hand num is in in-game seconds 
-    
+    self.episode_step_count = 1.0  # 1.0 so that
+    self.steps_per_episode = (1/self.reward_delay) *  300 # right hand num is in in-game seconds
+
     self.collisions_in_a_row = 0
     self.too_many_collisions_in_a_row = 12 # note: if stuck, then collisions will keep piling on
     self.obj_id_of_last_collision = -123456789  # anything <-1 is unassociated w/ an obj in sim (afaik)
-    
+
     self.client = airsim.CarClient()
     self.client.confirmConnection()
     self.client.enableApiControl(True)
@@ -60,7 +60,7 @@ class AirSimEnv(gym.Env):
     self.distance_travelled = 0.0
 
     # right num can be thought of as in game seconds
-    self.coords_offset = (1/self.reward_delay)*3  # num steps ago to calculate distance travelled from 
+    self.coords_offset = (1/self.reward_delay)*3  # num steps ago to calculate distance travelled from
 
     self.coords_queue = queue.Queue(self.coords_offset)  # stores (x, y) coordinate tuples
 
@@ -110,8 +110,8 @@ class AirSimEnv(gym.Env):
     # action_t
     steering_angle = self.action_space_steering[action]
     self.car_controls.steering = steering_angle
-    
-    
+
+
     self.client.simPause(False)  # unpause AirSim
 
     self.client.setCarControls(self.car_controls)
@@ -150,7 +150,7 @@ class AirSimEnv(gym.Env):
       else:
         self.collisions_in_a_row = 1
       self.obj_id_of_last_collision = collision_info.object_id
-        
+
     # done if episode timer runs out (1) OR if fallen into oblilvion (2)
     # OR if spinning out of control (3) OR if knocked into the stratosphere (4)
     done = False
@@ -161,7 +161,7 @@ class AirSimEnv(gym.Env):
        car_info.speed > 40.0 or \
        self.collisions_in_a_row > self.too_many_collisions_in_a_row:
       done = True
-    
+
     return state_t2, reward, done, {}
 
   def reset(self):
@@ -174,7 +174,7 @@ class AirSimEnv(gym.Env):
     self.client.armDisarm(True)
     self.client.reset()
     reset_pose = self.reset_poses[random.randint(0, len(self.reset_poses)-1)]
-    
+
     self.client.simSetVehiclePose(pose=reset_pose,
                                   ignore_collison=True)
     self.distance_travelled = 0.0
@@ -185,15 +185,15 @@ class AirSimEnv(gym.Env):
     self.episode_step_count = 1.0
     self.collisions_in_a_row = 0
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
-    
+
     self.episode_start_time = time.time()
     self.client.simPause(False)
-    
+
     return self._get_environment_state() # just to have an initial state?
 
   def render(self, mode='human'):
     pass  # airsim server binary handles rendering; we're just the client
-    
+
 
   def _get_reward(self, collision_info, car_info):
     """
@@ -321,5 +321,3 @@ class AirSimEnv(gym.Env):
                                         airsim.Vector3r(0.0, 0.0, 0.0))
     self.client.simSetCameraOrientation(self.backward_cam_name,
                                         airsim.Vector3r(0.0, 0.0, 11.5))
-
-    

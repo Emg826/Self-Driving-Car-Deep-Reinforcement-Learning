@@ -84,7 +84,7 @@ if want_to_train is True:
       print('Successfully loaded DDQN weights')
     except:
       print('Failed to load DDQN weights')
-    
+
   ddqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
                       visualize=False, verbose=2)
 

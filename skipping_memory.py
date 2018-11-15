@@ -1,4 +1,4 @@
-from rl.memory import Memory
+from rl.memory import Memory, sample_batch_indexes
 from collections import namedtuple
 from random import sample
 
@@ -29,12 +29,13 @@ class SkippingMemory():
 
     assert skip_factor > 0, "Need skip factor > 0. Note: skip_factor=1 is same as SequentialMemory"
     self.skip_factor = skip_factor
+    self.window_length = (self.num_states_to_stack * self.skip_factor) - 1
 
     # note: stores transitions as in sequential memory, i.e., consecutively
     self.actions = [None] * self.limit
     self.rewards = [None] * self.limit
     self.terminals = [None] * self.limit
-    self.states =  = [None] * self.limit
+    self.states = [None] * self.limit
 
   def sample(self, batch_size, batch_idxs=None):
     """
@@ -48,49 +49,49 @@ class SkippingMemory():
     :returns: list of transitions of the form
     """
     num_entries = self.nb_entries
-    assert num_entries-1 >= (self.num_states_to_stack * self.skip_factor)
-
-    # note: note sampling samples consecutively, literally just
-    # drawing batch_size number of indicies w/out replacement (as per keras-rl
-    # implementation)
-    sample_idx_range == range(0, num_entries-1)
+    assert num_entries-1 >= (self.window_length)
 
     experiences = []
-    sample_idx = None
     while len(experiences) < batch_size:
-      # 1.  Get a random index
-      if sample_idx is None:
-        sample_idx = sample(sample_idx_range, size=1)
-      # else: already have sample_idx from previous iteration
+      # 1. Get a random index -- sample idx_t+1 because SequentialMemory does it
+      idx_t_plus_1 = sample_batch_indexes(self.window_length+1, num_entries, size=1)[0]
 
-      # 2. if sample is terminal, i.e., next state is in diff epsidoe
-      if self.terminals[sample_idx]:
-        sample_idx = (sample_idx - 1) % num_entries
-        continue
+      # 2. Check that idx_t is not final state in an episode, e.g., it's not
+      # state_t+1 in the terminal transition: (state_t, action_t, reward_t, state_t+1)
+      terminal_t_minus_1 = self.terminals[idx_t_plus_1 - 2]  # boolean
 
-      # 3. Check if this is a terminating transition or if there is a
-      # terminating transition anywhere in this window's past
-      termination_within_window, idx_of_terminal = self._termination_within_window(sample_idx)
-      if termination_within_window:
-        sample_idx = None  # not going to sample_idx - idx_of_terminal in
-        continue
-        # case could get stuck in loop of resetting to same sample indicies
+      # 3. if t-1 is terminal, then that means state_t is the 'next state' in the
+      # terminal transition tuple ==> state_t is final state of an epsiode, not
+      # the first state of a new episode
+      while terminal_t_minus_1:
+        idx_t_plus_1 = sample_batch_indexes(self.window_length+1, num_entries, size=1)[0]
+        terminal_t_minus_1 = self.terminals[idx_t_plus_1 - 2]
 
-      # 4. Build Experience tuple
-      t_idx = sample_idx
-      stack_t_indices = 0
-      stack_t_indices = 1
-      experiences.append(Experience(state0=self.states[stack_t_indices],
-                                    action=self.actions[t_idx],
-                                    reward=self.rewards[t_idx],
-                                    state1=self.states[stack_t_indices],
+      # at this point, know for sure that state_t is not the end of an episode
+      # and that state_t+1 is in the same episode as state_t
+
+      # 4. now need to check and see if any of the states in the window are
+      # terminal since this would imply that one stacked frame is in a different
+      # episode than another stacked frame
+      idx_t = idx_t_plus_1 - 1
+      if self.terminal_within_window(idx_t):
+        continue  # don't bother if have a terminal in window; just start over
+
+      # 5. stack the states
+      state_t = [] # stacking states, so need a list to store multiple states
+      idx = idx_t
+      while len(state_t) < self.num_states_to_stack:
+        state_t.append(self.state[idx])
+        idx = (idx - self.skip_factor) % num_entries
+
+      # 6. Build Experience tuple
+      experiences.append(Experience(state0=state_t,
+                                    action=self.actions[idx_t],
+                                    reward=self.rewards[idx_t],
+                                    state1=self.states[idx_t_plus_1],
                                     terminal1=self.terminals[t_idx]))
-      sample_idx = None  # signals successful sampling, so need new rand idx
-
-
-
-
-
+    assert len(experiences) == batch_size
+    return experiences
 
   def append(self, state, action, reward, terminal, training=True):
     """
@@ -129,25 +130,25 @@ class SkippingMemory():
             'ignore_episode_boundaries': False,
             'limit': self.limit}
 
-  def _termination_within_window(self, sample_idx):
+  def terminal_within_window(self, idx_t):
     """
     Check if there are any terminal transitions in window of sample_idx
 
-    :param sample_idx: idx of state_t you are sampling
-    :returns: tuple: False if termination in window, else True;
-                     idx of episode termination
+    :param idx_t: idx of state_t you are sampling
+    :returns: False if termination in window - else True
     """
     num_entries = self.nb_entries
 
-    # can be negative; handle w/ % in
-    lower_idx = sample_idx - self.num_states_to_stack * self.skip_factor
+    # could be negative; handle w/ % in []
+    least_idx = idx_t - self.window_length
 
-    indices_in_window = [idx % num_entries for idx in range(lower_idx, sample_idx)]
+    # note: to check if state_i is a terminal state, need to check if idx_i-1
+    # has terminal, which s
+    indices_in_window = [idx % num_entries for idx in range(least_idx-1, idx_t-1)]
 
-    # for each idx in window (including indices not going to be stacked),
-    # check if terminal
+    # check if any terminals in window (including @ states not stacked)
     for idx in indices_in_window:
       if self.terminals[idx] is True:
-        return True, idx
+        return True
 
-    return False, None
+    return False

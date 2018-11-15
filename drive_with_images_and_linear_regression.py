@@ -73,7 +73,7 @@ class CollisionAvoiderDriver():
     print("Training!")
     self.incremental_pca = self.incremental_pca.partial_fit(X)
     X_pca = self.incremental_pca.transform(X)
-      
+
     self.collision_classifier = self.collision_classifier.partial_fit(X_pca,
                                                                       y,
                                                                       classes=[0, 1])  # collision=1
