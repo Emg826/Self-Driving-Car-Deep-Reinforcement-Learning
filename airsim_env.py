@@ -267,8 +267,14 @@ class AirSimEnv(Env):
     # build list of airsim.ImageRequest objects to give to client.simGetImages()
     list_of_img_request_objs = []
     for cam_name in cam_names:
-      list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
+      if cam_name == self.left_cam_name or cam_name == self.right_cam_name:
+        list_of_img_request_objs.append(airsim.ImageRequest(camera_name=cam_name,
                                                            image_type=airsim.ImageType.Scene,
+                                                           pixels_as_float=False,
+                                                           compress=False))
+      else:
+        list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
+                                                           image_type=airsim.ImageType.DisparityNormalized,
                                                            pixels_as_float=False,
                                                            compress=False) )
 
@@ -309,9 +315,13 @@ class AirSimEnv(Env):
                                                   preprocessed_individual_imgs[1][int(3*height/7)::,:],
                                                   preprocessed_individual_imgs[2][int(3*height/7)::,0:int((3*width/5))]], axis=1)
 
-    # for debugging and getting cameras right
-    #cv2.imwrite('{}.jpg'.format(time.time()), composite_img)
+    alter_pixel = lambda pixel_value: int( 255.0 * (1.0 / (1.0 + math.exp(-1.0 * (math.sqrt(2.71 * float(pixel_value)) - 4.5) ))) )
+    for row_idx in range(0, composite_img.shape[0]):
+      for col_idx in  range(0, composite_img.shape[1]):
+        composite_img[row_idx][col_idx] = alter_pixel(composite_img[row_idx][col_idx])
 
+    # for debugging and getting cameras right
+    cv2.imwrite('{}.jpg'.format(time.time()), composite_img)
     return composite_img
 
   def _setup_my_cameras(self):
