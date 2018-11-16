@@ -10,13 +10,14 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
   "SimMode": "Car",
   "RpcEnabled": true,
   "EngineSound": false,
+  "ClockSpeed": 1,
   "CameraDefaults": {
     "CaptureSettings": [{
+      "ImageType": 1,
       "Width": 350,
       "Height": 260,
       "FOV_Degrees": 90
-    }]
-  }
+    }]}           
 }
 
 """
@@ -36,7 +37,17 @@ import time # just to check steps per second
 class AirSimEnv(Env):
   """Keras-rl usable gym (an openai package)"""
 
-  def __init__(self, num_steering_angles, max_num_steps_in_episode, time_steps_between_dist_calc):
+  def __init__(self, num_steering_angles, max_num_steps_in_episode,
+                   time_steps_between_dist_calc,
+                   lambda_function_to_apply_to_pixels= lambda pixel_value: pixel_value):
+    """
+    Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
+    and the looping through the image is handled by this class. Therefore, only 1
+    parameter to this lambda function, call it pixel_value or something. Default is
+    a do nothing function.
+    """
+    self.PHI = lambda_function_to_apply_to_pixels  # PHI from DQN algorithm
+   
     # steering stuff
     self.action_space = spaces.Discrete(num_steering_angles)
     self.action_space_steering = np.linspace(-1.0, 1.0, num_steering_angles).tolist()
@@ -248,8 +259,8 @@ class AirSimEnv(Env):
     """
     # puts these in the order should be concatenated (left to r)
     cam_names = [self.left_cam_name,
-                 self.forward_cam_name,
-                 self.right_cam_name]
+                        self.forward_cam_name,
+                        self.right_cam_name]
     sim_img_responses = self._request_all_sim_images(cam_names)
     return self._make_composite_image_from_responses(sim_img_responses)
 
@@ -267,61 +278,60 @@ class AirSimEnv(Env):
     # build list of airsim.ImageRequest objects to give to client.simGetImages()
     list_of_img_request_objs = []
     for cam_name in cam_names:
-      if cam_name == self.left_cam_name or cam_name == self.right_cam_name:
-        list_of_img_request_objs.append(airsim.ImageRequest(camera_name=cam_name,
-                                                           image_type=airsim.ImageType.Scene,
-                                                           pixels_as_float=False,
+      list_of_img_request_objs.append(airsim.ImageRequest(camera_name=cam_name,
+                                                           image_type=airsim.ImageType.DepthPlanner,
+                                                           pixels_as_float=True,
                                                            compress=False))
-      else:
-        list_of_img_request_objs.append( airsim.ImageRequest(camera_name=cam_name,
-                                                           image_type=airsim.ImageType.DisparityNormalized,
-                                                           pixels_as_float=False,
-                                                           compress=False) )
 
     return self.client.simGetImages(list_of_img_request_objs)
 
   def _make_composite_image_from_responses(self, sim_img_responses):
     """
-    Take the list of ImageResponse objects (the observation), each with
-    uncompressed 1D RGBA binary string representations of images, convert
-    the image to a 2D-4 channel numpy array, and then concatenate all of
-    the images into a composite (panoramic-ish) image.
+    Take the list of ImageResponse objects (the observation), 2D numpy array,
+    and then concatenate all of the images into a composite (panoramic-ish) image.
 
     :param sim_img_responses: list of ImageResponse obj from a call to
-    request_all_4_sim_images() in the AirSimEnv class
-    :param cam_names: names of the cameras from which the image request objs
-    were gotten; order of this names in cam_names is ASSUMED to be the same
-    order in sim_img_responses
-
-    :returns: 2D, 4 channel numpy array of all images "stitched" together as:
-    left forward right back  (NOTE: not sure where to put back img).
-
-    Example numpy array: [ [(100, 125, 150, 1) , (255, 100, 255, 1)],
-                           [(255, 255, 255, 1) , (255, 255, 0, 1)] ]
+    request_all_4_sim_images() in the AirSimEnv class; Note: should be type DepthPlanner
+    
+    :returns: 2D channel numpy array of all images "stitched" together and after
+    applying self.PHI (pixel by pixel preprocessing function) 
     """
     # extract the 1D  RGBA binary uint8 string images into 2D,
     # 4 channel images; append that image to a list
 
     height = sim_img_responses[0].height
     width = sim_img_responses[0].width
-    # byte string array --> 1d numpy array --> png --> add to composite image
-    preprocess_individual = lambda img_response_obj:  cv2.cvtColor(np.fromstring(img_response_obj.image_data_uint8, dtype=np.uint8).reshape(height, width, 4),
-                                                                                          cv2.COLOR_BGR2GRAY) * 1.2 # 1.2x  brightness
-    preprocessed_individual_imgs = []
+
+    # originally, the image is a 1D python list; want to turn it into a 2D numpy array
+    reshaped_imgs = []
     for img_response_obj in sim_img_responses:
-      preprocessed_individual_imgs.append(preprocess_individual(img_response_obj)*2.0)
+      reshaped_imgs.append(airsim.list_to_2d_float_array(img_response_obj.image_data_float,
+                                                                            img_response_obj.width,
+                                                                            img_response_obj.height))
 
-    composite_img = np.concatenate([preprocessed_individual_imgs[0][int(3*height/7)::,int((2*width/5))::],
-                                                  preprocessed_individual_imgs[1][int(3*height/7)::,:],
-                                                  preprocessed_individual_imgs[2][int(3*height/7)::,0:int((3*width/5))]], axis=1)
+    # stitch left, front, and right camera images together
+    composite_img = np.concatenate([reshaped_imgs[0][int(3*height/7)::,int((2*width/5))::],
+                                                  reshaped_imgs[1][int(3*height/7)::,:],
+                                                  reshaped_imgs[2][int(3*height/7)::,0:int((3*width/5))]], axis=1)
 
-    alter_pixel = lambda pixel_value: int( 255.0 * (1.0 / (1.0 + math.exp(-1.0 * (math.sqrt(2.71 * float(pixel_value)) - 4.5) ))) )
-    for row_idx in range(0, composite_img.shape[0]):
-      for col_idx in  range(0, composite_img.shape[1]):
-        composite_img[row_idx][col_idx] = alter_pixel(composite_img[row_idx][col_idx])
+    # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
+    if len(composite_img.shape) ==  2:
+      for row_idx in range(0, composite_img.shape[0]):
+        for col_idx in  range(0, composite_img.shape[1]):
+          composite_img[row_idx][col_idx] = self.PHI(composite_img[row_idx][col_idx])
 
-    # for debugging and getting cameras right
-    cv2.imwrite('{}.jpg'.format(time.time()), composite_img)
+    # else, maybe there's an RGB value in each pixel location?
+    elif len(composite_img.shape) == 3:
+      for row_idx in range(0, composite_img.shape[0]):
+        for col_idx in  range(0, composite_img.shape[1]):
+          for _ in range(0, composite_img.shape[2]):
+            composite_img[row_idx][col_idx][_] = self.PHI(composite_img[row_idx][col_idx][_])
+    else:
+      print('Warning! image could not be preprocessed')
+
+    # for debugging and getting cameras correct
+    #cv2.imwrite('{}.jpg'.format(time.time()), composite_img)
+    
     return composite_img
 
   def _setup_my_cameras(self):

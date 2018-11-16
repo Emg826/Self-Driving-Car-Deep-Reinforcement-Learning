@@ -2,8 +2,29 @@
 """https://github.com/Kjell-K/AirGym/blob/master/DQN-Train.py"""
 """https://stackoverflow.com/questions/34716454/where-do-i-call-the-batchnormalization-function-in-keras"""
 
+""" Copy and paste this into your settings.json (which hould be in your Documents folder)
+
+{
+  "SettingsVersion": 1.2,
+  "SimMode": "Car",
+  "RpcEnabled": true,
+  "EngineSound": false,
+  "ClockSpeed": 1,
+  "CameraDefaults": {
+    "CaptureSettings": [{
+      "ImageType": 1,
+      "Width": 350,
+      "Height": 260,
+      "FOV_Degrees": 90
+    }]}           
+}
+
+
+"""
+
 import numpy as np
 import random
+import math
 
 from keras.models import Sequential
 from keras.layers import Dense, MaxPooling2D, Flatten, Conv2D, BatchNormalization, Activation
@@ -18,19 +39,21 @@ from rl.callbacks import ModelIntervalCheckpoint  # https://github.com/keras-rl/
 from airsim_env import AirSimEnv
 from skipping_memory import SkippingMemory
 
+PHI = lambda pixel_value: max(0, 65.0 * math.log(abs(pixel_value-0.7), math.e)) # just determined by plotting on desmos
+# and also, using DepthPlanner, so pixel values are meters
 
 env = AirSimEnv(num_steering_angles=5,
                        max_num_steps_in_episode=10**4,
-                       time_steps_between_dist_calc=40)
+                       time_steps_between_dist_calc=48,   #~6 times steps per sec
+                        lambda_function_to_apply_to_pixels=PHI)
 num_steering_angles = env.action_space.n
 
 random.seed()
 np.random.seed()
 
 INPUT_SHAPE = (260-int(3*260/7), 770) # H x W (no channels because assume DepthPlanner)
-NUM_FRAMES_TO_STACK = 7  # reward_delay * this = prev sec as input
+NUM_FRAMES_TO_STACK = 5  # reward_delay * this = prev sec as input
 STACK_EVERY_N_FRAMES = 3
-
 
 input_shape = (NUM_FRAMES_TO_STACK,) + INPUT_SHAPE
 
@@ -70,18 +93,18 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               value_max=1.0, # start off 100% random
                               value_min=0.05,  # get to random action x% of time
                               value_test=0.0,  # when testing, take rand action this val *100 % of time
-                              nb_steps=num_total_training_steps) # of time steps to go from epsilon=value_max to =value_min
+                              nb_steps=int(num_total_training_steps/2)) # of time steps to go from epsilon=value_max to =value_min
 
 
 ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
-                     memory=replay_memory, enable_double_dqn=True,
-                     enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
-                     policy=policy, gamma=0.99, train_interval=4,
-                     nb_steps_warmup=10**3)
+                                  memory=replay_memory, enable_double_dqn=True,
+                                  enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
+                                  policy=policy, gamma=0.99, train_interval=4,
+                                  nb_steps_warmup=10**3)
 
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1115.h5'
+weights_filename = 'ddqn_collision_avoidance_1116.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 

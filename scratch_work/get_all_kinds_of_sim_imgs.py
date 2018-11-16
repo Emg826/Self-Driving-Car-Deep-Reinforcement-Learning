@@ -5,7 +5,8 @@ ImageType values in airsim.ImageRequest(). These are mostly computer vision
 terms, so it helps to Google image search and see what such images look like.
 
 Scene = 0: raw image from camera?
-DepthPlanner = 1: all pts in plan[e] parallel to camera have same depth
+DepthPlanner = 1: all pts in plan[e] parallel to camera have same depth - pixels are in meters, i.e.,
+  they're not colors or shades of gray
 DepthPerspective = 2: depth from camera using projection ray that hits that pixel (point cloud)
 DepthVis = 3: closest pixels --> black && >100m away pixels --> white pixels
 DisparityNormalized = 4: ^ but normalized to [0, 1]?
@@ -25,9 +26,22 @@ import math
 client = airsim.CarClient()
 client.confirmConnection()
 client.enableApiControl(True)
-client.reset()
 
-time.sleep(1) # wait for things to get setup 
+
+# what i actually went with
+sim_img_response = client.simGetImages([airsim.ImageRequest(camera_name='0', image_type=airsim.ImageType.DepthPlanner, pixels_as_float=True, compress=False)])
+img = airsim.list_to_2d_float_array(sim_img_response[0].image_data_float, sim_img_response[0].width, sim_img_response[0].height)
+#PHI = lambda pixel: min(255.0, max(0, 75.0*math.log(pixel-0.5, math.e)))
+PHI = lambda pixel: max(0, 65 * math.log(abs(pixel-0.7), math.e))
+
+# apply PHI to each pixel
+for row_idx in range(0, img.shape[0]):
+  for col_idx in range(0, img.shape[1]):
+    img[row_idx][col_idx] = PHI(img[row_idx][col_idx])
+        
+#cv2.imwrite('depthPlannerMin255orMax0or80timeslnx-pt5.jpg', img)
+cv2.imwrite('depthPlannerMin0orMax0or70timeslnabsxminuspt7.jpg', img)
+
 
 sim_img_responses = client.simGetImages([airsim.ImageRequest(camera_name='0',
                                                                                       image_type=airsim.ImageType.Scene,
