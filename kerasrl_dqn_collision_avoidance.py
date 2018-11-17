@@ -12,13 +12,21 @@
   "ClockSpeed": 1,
   "CameraDefaults": {
     "CaptureSettings": [{
+      "ImageType": 0,
+      "Width": 640,
+      "Height": 384,
+      "FOV_Degrees": 120
+    },
+    {
       "ImageType": 1,
-      "Width": 350,
-      "Height": 260,
-      "FOV_Degrees": 90
-    }]}           
+      "Width": 640
+      "Height": 384
+      "FOV_Degrees": 120
+    }],
+    "X": -10, "Y": 0, "Z": -0.5,
+    "Pitch": -3, "Roll": 0, "Yaw": 0
+  }           
 }
-
 
 """
 
@@ -39,23 +47,29 @@ from rl.callbacks import ModelIntervalCheckpoint  # https://github.com/keras-rl/
 from airsim_env import AirSimEnv
 from skipping_memory import SkippingMemory
 
-PHI = lambda pixel_value: max(0, 65.0 * math.log(abs(pixel_value-0.7), math.e)) # just determined by plotting on desmos
-# and also, using DepthPlanner, so pixel values are meters
+
+# 40 ft (which is <= cond) is cutoff of sensor; @ 12mph (17.6 ft/s),
+# would take about 2 seconds to reach end of current img
+#295 = 255 + 40 && sqrt(40) = 6.32
+PHI = lambda pixel: min(255.0, ( 295.0 / (math.sqrt(max(0.001, pixel -0.475)))) - 6.32) if pixel <= 40.0 else 0.0
+
 
 env = AirSimEnv(num_steering_angles=5,
-                       max_num_steps_in_episode=10**4,
-                       time_steps_between_dist_calc=48,   #~6 times steps per sec
-                        lambda_function_to_apply_to_pixels=PHI)
+                      max_num_steps_in_episode=10**4,
+                      time_steps_between_dist_calc=18,   #~6 times steps per sec
+                      settings_json_image_w=640,  # from settings.json
+                      settings_json_image_h=384,
+                      fraction_of_top_of_img_to_cutoff=0.2,
+                      fraction_of_bottom_of_img_to_cutoff=0.2,
+                      lambda_function_to_apply_to_pixels=PHI)
+
+
 num_steering_angles = env.action_space.n
+INPUT_SHAPE = env.img_shape
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 4  # reward_delay * this = prev sec as input
+STACK_EVERY_N_FRAMES = 2
 
-random.seed()
-np.random.seed()
-
-INPUT_SHAPE = (260-int(3*260/7), 770) # H x W (no channels because assume DepthPlanner)
-NUM_FRAMES_TO_STACK = 5  # reward_delay * this = prev sec as input
-STACK_EVERY_N_FRAMES = 3
-
-input_shape = (NUM_FRAMES_TO_STACK,) + INPUT_SHAPE
+input_shape = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + INPUT_SHAPE
 
 model = Sequential()
 model.add(Conv2D(32, kernel_size=5, strides=4,
@@ -80,13 +94,13 @@ print(model.summary())
 
 #replay_memory = SequentialMemory(limit=10**4, NUM_FRAMES_TO_STACK=NUM_FRAMES_TO_STACK)
 replay_memory = SkippingMemory(limit=10**4,
-                                              num_states_to_stack=NUM_FRAMES_TO_STACK,
+                                              num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
                                               skip_factor=STACK_EVERY_N_FRAMES)
 
 # something like: w/ probability epsilon (which decays through training),
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
-num_total_training_steps = 10**5
+num_total_training_steps = 150000
 
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               attr='eps',
@@ -104,7 +118,7 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
 
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1116.h5'
+weights_filename = 'ddqn_collision_avoidance_1117.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 

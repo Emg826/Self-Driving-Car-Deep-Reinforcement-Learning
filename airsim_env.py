@@ -13,11 +13,20 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
   "ClockSpeed": 1,
   "CameraDefaults": {
     "CaptureSettings": [{
+      "ImageType": 0,
+      "Width": 640,
+      "Height": 384,
+      "FOV_Degrees": 120
+    },
+    {
       "ImageType": 1,
-      "Width": 350,
-      "Height": 260,
-      "FOV_Degrees": 90
-    }]}           
+      "Width": 640
+      "Height": 384
+      "FOV_Degrees": 120
+    }],
+    "X": -10, "Y": 0, "Z": -0.5,
+    "Pitch": -3, "Roll": 0, "Yaw": 0
+  }           
 }
 
 """
@@ -39,6 +48,10 @@ class AirSimEnv(Env):
 
   def __init__(self, num_steering_angles, max_num_steps_in_episode,
                    time_steps_between_dist_calc,
+                   settings_json_image_w,
+                   settings_json_image_h,
+                   fraction_of_top_of_img_to_cutoff,
+                   fraction_of_bottom_of_img_to_cutoff,
                    lambda_function_to_apply_to_pixels= lambda pixel_value: pixel_value):
     """
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
@@ -46,12 +59,20 @@ class AirSimEnv(Env):
     parameter to this lambda function, call it pixel_value or something. Default is
     a do nothing function.
     """
+    # image stuff
     self.PHI = lambda_function_to_apply_to_pixels  # PHI from DQN algorithm
+
+    self.first_row_idx = int(settings_json_image_h * fraction_of_top_of_img_to_cutoff)
+    self.last_row_idx = int(settings_json_image_h * (1-fraction_of_bottom_of_img_to_cutoff))
+    
+    assert self.first_row_idx < self.last_row_idx
+    
+    self.img_shape = (self.last_row_idx-self.first_row_idx, settings_json_image_w)
    
     # steering stuff
     self.action_space = spaces.Discrete(num_steering_angles)
     self.action_space_steering = np.linspace(-1.0, 1.0, num_steering_angles).tolist()
-    self.car_controls = airsim.CarControls(throttle=0.55,
+    self.car_controls = airsim.CarControls(throttle=0.50,
                                                        steering=0.0,
                                                        is_manual_gear=True,
                                                        manual_gear=1)
@@ -196,8 +217,9 @@ class AirSimEnv(Env):
     reset_pose = self.reset_poses[random.randint(0, len(self.reset_poses)-1)]
 
     self.client.simSetVehiclePose(pose=reset_pose,
-                                  ignore_collison=True)
+                                           ignore_collison=True)
     self.distance_travelled = 0.0
+    print(reset_pose)
 
     while not self.coords_queue.empty():  # clear the queue
       _ = self.coords_queue.get()
@@ -236,7 +258,7 @@ class AirSimEnv(Env):
       return -1.0
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.95
+      w_dist = 0.98
       assert w_dist <= 1.0
 
       exponent =  math.sqrt(0.175*self.distance_travelled) + (10*w_dist)  # @ 0.15*dist_trav: hit 0.6 reward @ 500units
@@ -258,13 +280,11 @@ class AirSimEnv(Env):
     :returns: panoramic image, numpy array with shape (heigh, width, (R, G, B, A))
     """
     # puts these in the order should be concatenated (left to r)
-    cam_names = [self.left_cam_name,
-                        self.forward_cam_name,
-                        self.right_cam_name]
-    sim_img_responses = self._request_all_sim_images(cam_names)
-    return self._make_composite_image_from_responses(sim_img_responses)
+                
+    sim_img_responses = self._request_sim_images([self.forward_cam_name])
+    return self._make_preprocessed_depth_planner_image(sim_img_responses)
 
-  def _request_all_sim_images(self, cam_names):
+  def _request_sim_images(self, cam_names):
     """
     Helper to get_composite_sim_image. Make a request to the simulation from the
     client for a snapshot from each of the 4 cameras.
@@ -285,10 +305,40 @@ class AirSimEnv(Env):
 
     return self.client.simGetImages(list_of_img_request_objs)
 
+  def _make_preprocessed_depth_planner_image(self, sim_img_response_list):
+    """
+    Apply self.PHI to a depth planner image. Expects only 1 image response
+    in sim_img_response_list, and that type should be type airsim.DepthPlanner """
+    height = sim_img_response_list[0].height
+    width = sim_img_response_list[0].width
+
+    # originally, the image is a 1D python list; want to turn it into a 2D numpy array
+    img = airsim.list_to_2d_float_array(sim_img_response_list[0].image_data_float,
+                                                   width, height)
+    # only need middle 60% of the image
+    img = img[self.first_row_idx : self.last_row_idx]
+
+    # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
+    if len(img.shape) ==  2:
+      for row_idx in range(0, img.shape[0]):
+        for col_idx in  range(0, img.shape[1]):
+          img[row_idx][col_idx] = self.PHI(img[row_idx][col_idx])
+
+    else:
+      print('Warning! image could not be preprocessed')
+
+    # for debugging and getting cameras correct
+    #cv2.imwrite('{}.jpg'.format(time.time()), composite_img)
+    
+    return img
+
   def _make_composite_image_from_responses(self, sim_img_responses):
     """
     Take the list of ImageResponse objects (the observation), 2D numpy array,
     and then concatenate all of the images into a composite (panoramic-ish) image.
+
+    Note: expects 3 img response obj, a left, front, and right img response objs,
+    in that order.
 
     :param sim_img_responses: list of ImageResponse obj from a call to
     request_all_4_sim_images() in the AirSimEnv class; Note: should be type DepthPlanner
@@ -296,7 +346,6 @@ class AirSimEnv(Env):
     :returns: 2D channel numpy array of all images "stitched" together and after
     applying self.PHI (pixel by pixel preprocessing function) 
     """
-    # extract the 1D  RGBA binary uint8 string images into 2D,
     # 4 channel images; append that image to a list
 
     height = sim_img_responses[0].height

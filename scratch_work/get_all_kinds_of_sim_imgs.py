@@ -32,17 +32,25 @@ client.enableApiControl(True)
 sim_img_response = client.simGetImages([airsim.ImageRequest(camera_name='0', image_type=airsim.ImageType.DepthPlanner, pixels_as_float=True, compress=False)])
 img = airsim.list_to_2d_float_array(sim_img_response[0].image_data_float, sim_img_response[0].width, sim_img_response[0].height)
 #PHI = lambda pixel: min(255.0, max(0, 75.0*math.log(pixel-0.5, math.e)))
-PHI = lambda pixel: max(0, 65 * math.log(abs(pixel-0.7), math.e))
+
+# 40 ft (which is <= cond) is cutoff of sensor; @ 12mph (17.6 ft/s),
+# would take about 2 seconds to reach end of current img
+#295 = 255 + 40 && sqrt(40) = 6.32
+PHI = lambda pixel: min(255.0, ( 295.0 / (math.sqrt(max(0.001, pixel -0.475)))) - 6.32) if pixel <= 40.0 else 0.0
 
 # apply PHI to each pixel
 for row_idx in range(0, img.shape[0]):
   for col_idx in range(0, img.shape[1]):
     img[row_idx][col_idx] = PHI(img[row_idx][col_idx])
+
+print(img[0:15])
+print(img[int(img.shape[0]*.7):int(img.shape[0]*.8)])
         
 #cv2.imwrite('depthPlannerMin255orMax0or80timeslnx-pt5.jpg', img)
 cv2.imwrite('depthPlannerMin0orMax0or70timeslnabsxminuspt7.jpg', img)
+cv2.imwrite('minus_top_third_and_minus_bottom_tenth.jpg', img[int(img.shape[0]*0.20) : int(img.shape[0]*0.8)] )
 
-
+""" # don't need the below
 sim_img_responses = client.simGetImages([airsim.ImageRequest(camera_name='0',
                                                                                       image_type=airsim.ImageType.Scene,
                                                                                       pixels_as_float=False,
@@ -77,6 +85,7 @@ sim_img_responses = client.simGetImages([airsim.ImageRequest(camera_name='0',
                                                                                       compress=False),])
 
 # raw imgs
+
 img_names = ['Scene', 'DepthPlanner', 'DepthPerspective', 'DepthVis', 'DisparityNormalized', 'Segmentation', 'SurfaceNormals', 'Infrared']
 for img_response_obj, img_name in zip(sim_img_responses, img_names):
   height = img_response_obj.height
@@ -102,6 +111,6 @@ for img_response_obj, img_name in zip(sim_img_responses, img_names):
       np_arr_of_img_2d[row_idx][col_idx] = alter_pixel(np_arr_of_img_2d[row_idx][col_idx])
   
   cv2.imwrite('experiment_{}.jpg'.format(img_name), np_arr_of_img_2d)
-
+"""
 
 
