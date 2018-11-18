@@ -82,10 +82,10 @@ model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
 model.add(Flatten())
-model.add(Dense(64, activity_regularizer=l2(0.03)))
+model.add(Dense(64, activity_regularizer=l2(0.001)))
 model.add(Activation('elu'))
 
-model.add(Dense(96, activity_regularizer=l2(0.03)))
+model.add(Dense(64, activity_regularizer=l2(0.001)))
 model.add(Activation('elu'))
 
 model.add(Dense(num_steering_angles))
@@ -116,7 +116,7 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                                   policy=policy, gamma=0.99, train_interval=4,
                                   nb_steps_warmup=10**3)
 
-ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
+ddqn_agent.compile(Adam(lr=1e-4), metrics=['mse']) # not use mse since |reward| <= 1.0
 
 weights_filename = 'ddqn_collision_avoidance_1117.h5'
 want_to_train = True

@@ -109,24 +109,20 @@ class AirSimEnv(Env):
     # quaternions of those locations
     # ; ordering: 1 2 3 4 while Quaternionr() has 2 3 4 1 for some reason
     # Note: these are all safe respawn points, i.e., not respawn into another vehicle
-    self.reset_poses = [airsim.Pose(airsim.Vector3r(46,-530,-.7),
-                                              airsim.Quaternionr(0,0,.01,1.02)), # checked
-                                  airsim.Pose(airsim.Vector3r(320,-18,-.7),
-                                              airsim.Quaternionr(0,0,1.0,.01)),  # checked
-                                  airsim.Pose(airsim.Vector3r(229,-313,-.7),
-                                              airsim.Quaternionr(0,0,-.73,.69)),   # checked
-                                  airsim.Pose(airsim.Vector3r(-710,-4,-.7),
-                                              airsim.Quaternionr(0,0,.02,1.0)),   # checked
-                                   airsim.Pose(airsim.Vector3r(-138.292, -7.577, -0.7),
-                                                   airsim.Quaternionr(0.0, 0.0, 0.002, 1.0)),
-                                   airsim.Pose(airsim.Vector3r(67.873, 160.916, -1.05),
-                                                   airsim.Quaternionr(0.0, 0.0, -.7, 0.714)),
-                                   airsim.Pose(airsim.Vector3r(55.514, -310.598, -1.05),
-                                                   airsim.Quaternionr(0.0, 0.0, .707, .707)),
-                                   airsim.Pose(airsim.Vector3r(64.665, -352.195, -1.05),
-                                                   airsim.Quaternionr(0.0, 0.0, .717, .697)),
-                                   airsim.Pose(airsim.Vector3r(67.507, 234.912, -1.05),
-                                                   airsim.Quaternionr(0.0, 0.0, -.7, 0.715))]
+    self.reset_poses = [airsim.Pose(airsim.Vector3r(-727.012,-7.407,-.7),  # safe
+                                                  airsim.Quaternionr(0,0,.016,1.0)),
+                              airsim.Pose(airsim.Vector3r(-169.546, -316.207, -0.72), # safe
+                                              airsim.Quaternionr(0.0, 0.0, .712, 0.702)),
+                              airsim.Pose(airsim.Vector3r(-292.415, 32.229, -0.7, # safe
+                                              airsim.Quaternionr(0.0, 0.0, -.679, 0.734)),
+                              airsim.Pose(airsim.Vector3r(222.984, -491.947, -0.7, # safe
+                                              airsim.Quaternionr(0.0, 0.0, .716, .698)),
+                              airsim.Pose(airsim.Vector3r(311.298, -10.177, -0.688, # safe
+                                              airsim.Quaternionr(0.0, 0.0, -1.0,.006)),
+                              airsim.Pose(airsim.Vector3r(-191.452, -474.923, -0.689, # safe
+                                              airsim.Quaternionr(0.0, 0.0, .008,1.0)),
+                              airsim.Pose(airsim.Vector3r(-316.513, 144.906, -0.688, # safe
+                                              airsim.Quaternionr(0.0, 0.0, -1.0,.003))]
 
 
   def step(self, action):
@@ -136,7 +132,7 @@ class AirSimEnv(Env):
     oblivion, spirialing out of control, getting stuck, etc.) are all done.
 
     :param action: an idx (so an integer) that corresponds to an action in the action_space.
-    this idx comes from the policy, i.e., from random selection or from ddqn.
+    this idx comes from the policy, i.e., from rssssandom selection or from ddqn.
 
     :returns: standard? openai gym stuff for step() function
     """
@@ -146,16 +142,14 @@ class AirSimEnv(Env):
     steering_angle = self.action_space_steering[action]
     self.car_controls.steering = steering_angle
 
-
     self.client.simPause(False)  # unpause AirSim
 
     self.client.setCarControls(self.car_controls)
 
     # reward_t
+    state_t2 = self._get_environment_state()
     collision_info = self.client.simGetCollisionInfo()
     car_info = self.client.getCarState()
-
-    state_t2 = self._get_environment_state()
 
     self.client.simPause(True)  # pause to do backend stuff
 
@@ -163,7 +157,7 @@ class AirSimEnv(Env):
     current_y = car_info.kinematics_estimated.position.y_val
     # z is down+ and up-, so not need
 
-    # euclidean distance since last step
+    # euclidean distance since last n step
     if self.coords_queue.full(): # only get when full bcuz want larger distance over time
       past_x, past_y = self.coords_queue.get()
       self.distance_travelled += math.sqrt( (current_x - past_x)**2 \
@@ -190,10 +184,11 @@ class AirSimEnv(Env):
     done = False
 
     if self.episode_step_count >  self.steps_per_episode or \
-       car_info.kinematics_estimated.position.z_val > -0.5125 or \
+       car_info.kinematics_estimated.position.z_val > -0.55 or \
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
-       car_info.speed > 40.0 or \
-       self.collisions_in_a_row > self.too_many_collisions_in_a_row:
+       car_info.speed > 25.0 or \
+       self.collisions_in_a_row > self.too_many_collisions_in_a_row or \
+       car_info.kinematics_estimated.position.z_val < -2.5:
       done = True
 
     self.episode_step_count += 1
