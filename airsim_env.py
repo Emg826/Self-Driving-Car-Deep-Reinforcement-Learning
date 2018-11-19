@@ -252,7 +252,7 @@ class AirSimEnv(Env):
       return -1.0
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.97
+      w_dist = 0.99
       assert w_dist <= 1.0
 
       # hit 1.0 reward @ 2kunits
