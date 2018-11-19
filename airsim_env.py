@@ -46,8 +46,8 @@ import time # just to check steps per second
 class AirSimEnv(Env):
   """Keras-rl usable gym (an openai package)"""
 
-  def __init__(self, num_steering_angles, max_num_steps_in_episode,
-                   time_steps_between_dist_calc,
+  def __init__(self, num_steering_angles,
+                   max_num_steps_in_episode,
                    settings_json_image_w,
                    settings_json_image_h,
                    fraction_of_top_of_img_to_cutoff,
@@ -95,9 +95,9 @@ class AirSimEnv(Env):
 
     # major problem: car drives around in circle; need space out distance travelled
     self.distance_travelled = 0.0
-    self.coords_offset = time_steps_between_dist_calc  # num steps ago to calculate distance travelled from
-    self.coords_queue = queue.Queue(self.coords_offset)  # stores (x, y) coordinate tuples
-
+    self.starting_x = 0.0
+    self.starting_y = 0.0
+    
     self.time_since_ep_start = 2**31  # only used for debug and steps/second measurement,
     # not for tracking progress in sim; note: sim steps per real life seconds is ~6
 
@@ -159,12 +159,8 @@ class AirSimEnv(Env):
     current_y = car_info.kinematics_estimated.position.y_val
     # z is down+ and up-, so not need
 
-    # euclidean distance since last n step
-    if self.coords_queue.full(): # only get when full bcuz want larger distance over time
-      past_x, past_y = self.coords_queue.get()
-      self.distance_travelled += math.sqrt( (current_x - past_x)**2 \
-                                                       +(current_y - past_y)**2 )
-    self.coords_queue.put( (current_x, current_y) )
+    # total distance travelled; Manhattan distance
+    self.distance_travelled = math.sqrt((current_x - self.starting_x)**2 + (current_y - self.starting_y)**2)
 
     reward = self._get_reward(collision_info, car_info)
 
@@ -215,11 +211,12 @@ class AirSimEnv(Env):
 
     self.client.simSetVehiclePose(pose=reset_pose,
                                            ignore_collison=True)
+
+    self.starting_x = reset_pose.position.x_val
+    self.starting_y = reset_pose.position.y_val
+    
     self.distance_travelled = 0.0
     print(reset_pose)
-
-    while not self.coords_queue.empty():  # clear the queue
-      _ = self.coords_queue.get()
 
     self.episode_step_count = 0
     self.collisions_in_a_row = 0
@@ -255,11 +252,11 @@ class AirSimEnv(Env):
       return -1.0
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.965
+      w_dist = 0.97
       assert w_dist <= 1.0
 
-      # hit 1.0 reward @ 500units
-      total_distance_contrib = w_dist * (self.distance_travelled / 500 )
+      # hit 1.0 reward @ 2kunits
+      total_distance_contrib = w_dist * max(0, min(1.0, (self.distance_travelled / 2000 )))
 
       # slight reward for steering straight, i.e., only turn if necessary in long term
       w_non0_steering = 1.0-w_dist
@@ -268,6 +265,9 @@ class AirSimEnv(Env):
       # this means the decrease in reward (never penalty though) is linear deviate from 0. steering
       steering_contrib = w_non0_steering * (1 - abs(self.car_controls.steering))
 
+
+      # for debug
+      #print(self.distance_travelled, total_distance_contrib + steering_contrib)
       return total_distance_contrib + steering_contrib
 
   def _get_environment_state(self):

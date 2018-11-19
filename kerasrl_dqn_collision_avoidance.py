@@ -56,7 +56,6 @@ PHI = lambda pixel: min(255.0, ( 295.0 / (math.sqrt(max(0.001, pixel -0.475)))) 
 
 env = AirSimEnv(num_steering_angles=5,
                       max_num_steps_in_episode=10**4,
-                      time_steps_between_dist_calc=18,   #~6 times steps per sec
                       settings_json_image_w=640,  # from settings.json
                       settings_json_image_h=384,
                       fraction_of_top_of_img_to_cutoff=0.2,
@@ -72,24 +71,20 @@ STACK_EVERY_N_FRAMES = 2
 input_shape = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(32, kernel_size=4, strides=3,
+model.add(Conv2D(48, kernel_size=4, strides=3,
                  input_shape=input_shape, data_format = 'channels_first'))
 model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
-model.add(Conv2D(64, kernel_size=3, strides=2))
-model.add(BatchNormalization())
-model.add(Activation('sigmoid'))
-
-model.add(Conv2D(64, kernel_size=3, strides=2))
+model.add(Conv2D(48, kernel_size=3, strides=2))
 model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
 model.add(Flatten())
-model.add(Dense(64, activity_regularizer=l2(0.005)))
+model.add(Dense(48, activity_regularizer=l2(0.005)))
 model.add(Activation('elu'))
 
-model.add(Dense(128, activity_regularizer=l2(0.005)))
+model.add(Dense(64, activity_regularizer=l2(0.005)))
 model.add(Activation('elu'))
 
 model.add(Dense(num_steering_angles))
@@ -97,7 +92,7 @@ print(model.summary())
 
 
 #replay_memory = SequentialMemory(limit=10**4, NUM_FRAMES_TO_STACK=NUM_FRAMES_TO_STACK)
-replay_memory = SkippingMemory(limit=2*10**4,
+replay_memory = SkippingMemory(limit=10**4,
                                               num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
                                               skip_factor=STACK_EVERY_N_FRAMES)
 
@@ -117,12 +112,12 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
-                                  policy=policy, gamma=0.99, train_interval=4,
+                                  policy=policy, gamma=0.98, train_interval=4,
                                   nb_steps_warmup=10**3)
 
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1118.h5'
+weights_filename = 'ddqn_collision_avoidance_1119.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 
