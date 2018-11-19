@@ -72,20 +72,24 @@ STACK_EVERY_N_FRAMES = 2
 input_shape = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(32, kernel_size=5, strides=4,
+model.add(Conv2D(32, kernel_size=4, strides=3,
                  input_shape=input_shape, data_format = 'channels_first'))
 model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
-model.add(Conv2D(64, kernel_size=4, strides=3))
+model.add(Conv2D(64, kernel_size=3, strides=2))
+model.add(BatchNormalization())
+model.add(Activation('sigmoid'))
+
+model.add(Conv2D(64, kernel_size=3, strides=2))
 model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
 model.add(Flatten())
-model.add(Dense(64, activity_regularizer=l2(0.001)))
+model.add(Dense(64, activity_regularizer=l2(0.005)))
 model.add(Activation('elu'))
 
-model.add(Dense(64, activity_regularizer=l2(0.001)))
+model.add(Dense(128, activity_regularizer=l2(0.005)))
 model.add(Activation('elu'))
 
 model.add(Dense(num_steering_angles))
@@ -93,7 +97,7 @@ print(model.summary())
 
 
 #replay_memory = SequentialMemory(limit=10**4, NUM_FRAMES_TO_STACK=NUM_FRAMES_TO_STACK)
-replay_memory = SkippingMemory(limit=10**4,
+replay_memory = SkippingMemory(limit=2*10**4,
                                               num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
                                               skip_factor=STACK_EVERY_N_FRAMES)
 
@@ -116,9 +120,9 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                                   policy=policy, gamma=0.99, train_interval=4,
                                   nb_steps_warmup=10**3)
 
-ddqn_agent.compile(Adam(lr=1e-4), metrics=['mse']) # not use mse since |reward| <= 1.0
+ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1117.h5'
+weights_filename = 'ddqn_collision_avoidance_1118.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 

@@ -83,7 +83,9 @@ class AirSimEnv(Env):
 
     # collision info for emergency resets and reward func calc
     self.collisions_in_a_row = 0
-    self.too_many_collisions_in_a_row = 15 # note: if stuck, then collisions will keep piling on
+    self.too_many_collisions_in_a_row = 3 # note: if stuck, then collisions will keep piling on
+    # also collisions being stuck can cause glitch through map 
+    
     self.obj_id_of_last_collision = -123456789  # anything <-1 is unassociated w/ an obj in sim (afaik)
 
     # connect to the client; we're ready to connect to set up our cameras
@@ -113,15 +115,15 @@ class AirSimEnv(Env):
                                                   airsim.Quaternionr(0,0,.016,1.0)),
                               airsim.Pose(airsim.Vector3r(-169.546, -316.207, -0.72), # safe
                                               airsim.Quaternionr(0.0, 0.0, .712, 0.702)),
-                              airsim.Pose(airsim.Vector3r(-292.415, 32.229, -0.7, # safe
+                              airsim.Pose(airsim.Vector3r(-292.415, 32.229, -0.7), # safe
                                               airsim.Quaternionr(0.0, 0.0, -.679, 0.734)),
-                              airsim.Pose(airsim.Vector3r(222.984, -491.947, -0.7, # safe
+                              airsim.Pose(airsim.Vector3r(222.984, -491.947, -0.7), # safe
                                               airsim.Quaternionr(0.0, 0.0, .716, .698)),
-                              airsim.Pose(airsim.Vector3r(311.298, -10.177, -0.688, # safe
+                              airsim.Pose(airsim.Vector3r(311.298, -10.177, -0.688), # safe
                                               airsim.Quaternionr(0.0, 0.0, -1.0,.006)),
-                              airsim.Pose(airsim.Vector3r(-191.452, -474.923, -0.689, # safe
+                              airsim.Pose(airsim.Vector3r(-191.452, -474.923, -0.689), # safe
                                               airsim.Quaternionr(0.0, 0.0, .008,1.0)),
-                              airsim.Pose(airsim.Vector3r(-316.513, 144.906, -0.688, # safe
+                              airsim.Pose(airsim.Vector3r(-316.513, 144.906, -0.688), # safe
                                               airsim.Quaternionr(0.0, 0.0, -1.0,.003))]
 
 
@@ -253,11 +255,11 @@ class AirSimEnv(Env):
       return -1.0
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.98
+      w_dist = 0.965
       assert w_dist <= 1.0
 
-      exponent =  math.sqrt(0.175*self.distance_travelled) + (10*w_dist)  # @ 0.15*dist_trav: hit 0.6 reward @ 500units
-      total_distance_contrib = w_dist * (1 / (1 + math.exp(-exponent)))
+      # hit 1.0 reward @ 500units
+      total_distance_contrib = w_dist * (self.distance_travelled / 500 )
 
       # slight reward for steering straight, i.e., only turn if necessary in long term
       w_non0_steering = 1.0-w_dist
@@ -323,7 +325,7 @@ class AirSimEnv(Env):
       print('Warning! image could not be preprocessed')
 
     # for debugging and getting cameras correct
-    #cv2.imwrite('{}.jpg'.format(time.time()), composite_img)
+    #cv2.imwrite('{}.jpg'.format(time.time()), img)
     
     return img
 
