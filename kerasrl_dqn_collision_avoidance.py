@@ -65,8 +65,8 @@ env = AirSimEnv(num_steering_angles=5,
 
 num_steering_angles = env.action_space.n
 INPUT_SHAPE = env.img_shape
-NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 4  # reward_delay * this = prev sec as input
-STACK_EVERY_N_FRAMES = 2
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 3  # reward_delay * this = prev sec as input
+STACK_EVERY_N_FRAMES = 4
 
 input_shape = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + INPUT_SHAPE
 
@@ -118,7 +118,7 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
 weights_filename = 'ddqn_collision_avoidance_1119.h5'
-want_to_train = True
+want_to_train = False
 train_from_weights_in_weights_filename = True
 
 if want_to_train is True:

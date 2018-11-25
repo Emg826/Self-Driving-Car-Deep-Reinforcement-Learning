@@ -52,7 +52,7 @@ class AirSimEnv(Env):
                    settings_json_image_h,
                    fraction_of_top_of_img_to_cutoff,
                    fraction_of_bottom_of_img_to_cutoff,
-                   lambda_function_to_apply_to_pixels= lambda pixel_value: pixel_value):
+                   lambda_function_to_apply_to_pixels= None):
     """
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
     and the looping through the image is handled by this class. Therefore, only 1
@@ -94,7 +94,7 @@ class AirSimEnv(Env):
     self.client.enableApiControl(True)
 
     # major problem: car drives around in circle; need space out distance travelled
-    self.distance_travelled = 0.0
+    self.distance_since_last_collision = 0.0
     self.starting_x = 0.0
     self.starting_y = 0.0
     
@@ -148,19 +148,22 @@ class AirSimEnv(Env):
 
     self.client.setCarControls(self.car_controls)
 
-    # reward_t
-    state_t2 = self._get_environment_state()
+    # reward_t and state_t2
+    img_response_list = self._request_sim_images([self.forward_cam_name])
     collision_info = self.client.simGetCollisionInfo()
     car_info = self.client.getCarState()
 
     self.client.simPause(True)  # pause to do backend stuff
+    
+    state_t2 = self._make_preprocessed_depth_planner_image(img_response_list)
+
 
     current_x = car_info.kinematics_estimated.position.x_val
     current_y = car_info.kinematics_estimated.position.y_val
     # z is down+ and up-, so not need
 
     # total distance travelled; Manhattan distance
-    self.distance_travelled = math.sqrt((current_x - self.starting_x)**2 + (current_y - self.starting_y)**2)
+    self.distance_since_last_collision = math.sqrt((current_x - self.starting_x)**2 + (current_y - self.starting_y)**2)
 
     reward = self._get_reward(collision_info, car_info)
 
@@ -215,7 +218,7 @@ class AirSimEnv(Env):
     self.starting_x = reset_pose.position.x_val
     self.starting_y = reset_pose.position.y_val
     
-    self.distance_travelled = 0.0
+    self.distance_since_last_collision = 0.0
     print(reset_pose)
 
     self.episode_step_count = 0
@@ -223,9 +226,10 @@ class AirSimEnv(Env):
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
 
     self.client.simPause(False)
-    self.time_since_ep_start = time.time()  # again, for debug purposes 
-
-    return self._get_environment_state() # just to have an initial state?
+    self.time_since_ep_start = time.time()  # again, for debug purposes
+    
+    img_response_list = self._request_sim_images([self.forward_cam_name])
+    return self._make_preprocessed_depth_planner_image(img_response_list) # just to have an initial state?
 
   def render(self, mode='human'):
     pass  # airsim server binary handles rendering; we're just the client
@@ -249,6 +253,7 @@ class AirSimEnv(Env):
     # and when object_id does not register, so it is more useful than has_collided
     if collision_info.object_id != -1 or \
        (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0):  #-1 if not currently colliding
+      self.distance_since_last_collision = 0.0
       return -1.0
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
@@ -256,7 +261,7 @@ class AirSimEnv(Env):
       assert w_dist <= 1.0
 
       # hit 1.0 reward @ 2kunits
-      total_distance_contrib = w_dist * max(0, min(1.0, (self.distance_travelled / 2000 )))
+      total_distance_contrib = w_dist * max(0, min(1.0, (self.distance_since_last_collision / 2000 )))
 
       # slight reward for steering straight, i.e., only turn if necessary in long term
       w_non0_steering = 1.0-w_dist
@@ -267,19 +272,8 @@ class AirSimEnv(Env):
 
 
       # for debug
-      #print(self.distance_travelled, total_distance_contrib + steering_contrib)
+      #print(self.distance_since_last_collision, total_distance_contrib + steering_contrib)
       return total_distance_contrib + steering_contrib
-
-  def _get_environment_state(self):
-    """
-    Get state of the environment and the vehicle in the environment.
-
-    :returns: panoramic image, numpy array with shape (heigh, width, (R, G, B, A))
-    """
-    # puts these in the order should be concatenated (left to r)
-                
-    sim_img_responses = self._request_sim_images([self.forward_cam_name])
-    return self._make_preprocessed_depth_planner_image(sim_img_responses)
 
   def _request_sim_images(self, cam_names):
     """
@@ -316,10 +310,11 @@ class AirSimEnv(Env):
     img = img[self.first_row_idx : self.last_row_idx]
 
     # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
-    if len(img.shape) ==  2:
-      for row_idx in range(0, img.shape[0]):
-        for col_idx in  range(0, img.shape[1]):
-          img[row_idx][col_idx] = self.PHI(img[row_idx][col_idx])
+    if len(img.shape) ==  2 :
+      if self.PHI is not None:
+        for row_idx in range(0, img.shape[0]):
+          for col_idx in  range(0, img.shape[1]):
+            img[row_idx][col_idx] = self.PHI(img[row_idx][col_idx])
 
     else:
       print('Warning! image could not be preprocessed')
