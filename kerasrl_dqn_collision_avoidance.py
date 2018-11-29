@@ -48,6 +48,11 @@ from airsim_env import AirSimEnv
 from skipping_memory import SkippingMemory
 
 
+# This block solved the "CUBLAS_STATUS_ALLOC_FAILED" issue: @https://stackoverflow.com/a/52762075
+import keras.backend as K
+cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
+K.set_session(K.tf.Session(config=cfg))
+
 # 40 ft (which is <= cond) is cutoff of sensor; @ 12mph (17.6 ft/s),
 # would take about 2 seconds to reach end of current img
 #295 = 255 + 40 && sqrt(40) = 6.32
@@ -60,6 +65,7 @@ env = AirSimEnv(num_steering_angles=5,
                       settings_json_image_h=384,
                       fraction_of_top_of_img_to_cutoff=0.2,
                       fraction_of_bottom_of_img_to_cutoff=0.2,
+                      seconds_between_steps=0.05,  # so as to prevent extreme case of 1000 steps per second (if that was possible)
                       lambda_function_to_apply_to_pixels=PHI)
 
 
@@ -71,20 +77,24 @@ STACK_EVERY_N_FRAMES = 4
 input_shape = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(48, kernel_size=4, strides=3,
+model.add(Conv2D(52, kernel_size=3, strides=2,
                  input_shape=input_shape, data_format = 'channels_first'))
 model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
-model.add(Conv2D(48, kernel_size=3, strides=2))
+model.add(Conv2D(52, kernel_size=3, strides=2))
+model.add(BatchNormalization())
+model.add(Activation('sigmoid'))
+
+model.add(Conv2D(52, kernel_size=3, strides=2))
 model.add(BatchNormalization())
 model.add(Activation('sigmoid'))
 
 model.add(Flatten())
-model.add(Dense(48, activity_regularizer=l2(0.005)))
+model.add(Dense(48, activity_regularizer=l2(0.001)))
 model.add(Activation('elu'))
 
-model.add(Dense(64, activity_regularizer=l2(0.005)))
+model.add(Dense(64, activity_regularizer=l2(0.001)))
 model.add(Activation('elu'))
 
 model.add(Dense(num_steering_angles))
@@ -113,18 +123,18 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
                                   policy=policy, gamma=0.98, train_interval=4,
-                                  nb_steps_warmup=10**3)
+                                  nb_steps_warmup=500)
 
 ddqn_agent.compile(Adam(lr=1e-4), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1119.h5'
-want_to_train = False
+weights_filename = 'ddqn_collision_avoidance_1129.h5'
+want_to_train = True
 train_from_weights_in_weights_filename = True
 
 if want_to_train is True:
 
   # note: interval's units are episode_steps
-  callbacks_list = [ModelIntervalCheckpoint(filepath=weights_filename, verbose=5, interval=1000)]
+  callbacks_list = [ModelIntervalCheckpoint(filepath=weights_filename, verbose=5, interval=750)]
 
   if train_from_weights_in_weights_filename:
     try:

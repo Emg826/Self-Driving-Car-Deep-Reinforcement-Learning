@@ -52,13 +52,19 @@ class AirSimEnv(Env):
                    settings_json_image_h,
                    fraction_of_top_of_img_to_cutoff,
                    fraction_of_bottom_of_img_to_cutoff,
+                   seconds_between_steps=0.0,
                    lambda_function_to_apply_to_pixels= None):
     """
+    :param seconds_between_steps: tune to reflect what you think real world performance
+    would be; note, this is real life seconds rather than simulation seconds
+    
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
     and the looping through the image is handled by this class. Therefore, only 1
     parameter to this lambda function, call it pixel_value or something. Default is
     a do nothing function.
     """
+    self.seconds_between_steps = seconds_between_steps
+    
     # image stuff
     self.PHI = lambda_function_to_apply_to_pixels  # PHI from DQN algorithm
 
@@ -148,12 +154,14 @@ class AirSimEnv(Env):
 
     self.client.setCarControls(self.car_controls)
 
+    time.sleep(self.seconds_between_steps)
+
     # reward_t and state_t2
     img_response_list = self._request_sim_images([self.forward_cam_name])
     collision_info = self.client.simGetCollisionInfo()
     car_info = self.client.getCarState()
 
-    self.client.simPause(True)  # pause to do backend stuff
+    
     
     state_t2 = self._make_preprocessed_depth_planner_image(img_response_list)
 
@@ -192,6 +200,7 @@ class AirSimEnv(Env):
        car_info.kinematics_estimated.position.z_val < -2.5:
       done = True
 
+    self.client.simPause(True)  # pause to do backend stuff
     self.episode_step_count += 1
 
 
