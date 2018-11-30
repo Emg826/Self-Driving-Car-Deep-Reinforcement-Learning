@@ -96,10 +96,10 @@ model.add(Conv2D(32, kernel_size=3, strides=2))
 model.add(Activation('relu'))
 
 model.add(Flatten())
-model.add(Dense(32, activity_regularizer=l2(0.001)))
+model.add(Dense(32, activity_regularizer=l2(0.01)))
 model.add(Activation('sigmoid'))
 
-model.add(Dense(64, activity_regularizer=l2(0.001)))
+model.add(Dense(64, activity_regularizer=l2(0.01)))
 model.add(Activation('sigmoid'))
 
 model.add(Dense(num_steering_angles))

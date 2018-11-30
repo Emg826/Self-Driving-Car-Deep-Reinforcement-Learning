@@ -135,8 +135,6 @@ class AirSimEnv(Env):
                                               airsim.Quaternionr(-0.005, 0.011, 0.296, 0.955)),
                               airsim.Pose(airsim.Vector3r(-316.513, 144.906, -0.688), # safe - aim @ roundabout but better to go L
                                               airsim.Quaternionr(0.0, 0.0, -1.0,.003)),
-                              airsim.Pose(airsim.Vector3r(317.114, -10.178, -0.688), # safe - cars to L and F
-                                              airsim.Quaternionr(0.0, 0.0, -1.0,.028)),
                               airsim.Pose(airsim.Vector3r(33.322, -528.89, -0.688), # safe
                                               airsim.Quaternionr(0.0, 0.0, -0.002,1.0))]
 
@@ -275,7 +273,7 @@ class AirSimEnv(Env):
       return -1.0 
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.975
+      w_dist = 0.970
       assert w_dist <= 1.0
 
       # hit 1.0 reward @ 2kunits
