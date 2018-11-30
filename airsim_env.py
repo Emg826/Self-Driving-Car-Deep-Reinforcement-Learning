@@ -52,10 +52,10 @@ class AirSimEnv(Env):
                    settings_json_image_h,
                    fraction_of_top_of_img_to_cutoff,
                    fraction_of_bottom_of_img_to_cutoff,
-                   seconds_between_steps=0.0,
+                   seconds_pause_between_steps=0.0,
                    lambda_function_to_apply_to_pixels= None):
     """
-    :param seconds_between_steps: tune to reflect what you think real world performance
+    :param seconds_pause_between_steps: tune to reflect what you think real world performance
     would be; note, this is real life seconds rather than simulation seconds
     
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
@@ -63,7 +63,7 @@ class AirSimEnv(Env):
     parameter to this lambda function, call it pixel_value or something. Default is
     a do nothing function.
     """
-    self.seconds_between_steps = seconds_between_steps
+    self.seconds_pause_between_steps = seconds_pause_between_steps
     
     # image stuff
     self.PHI = lambda_function_to_apply_to_pixels  # PHI from DQN algorithm
@@ -130,7 +130,15 @@ class AirSimEnv(Env):
                               airsim.Pose(airsim.Vector3r(-191.452, -474.923, -0.689), # safe
                                               airsim.Quaternionr(0.0, 0.0, .008,1.0)),
                               airsim.Pose(airsim.Vector3r(-316.513, 144.906, -0.688), # safe
-                                              airsim.Quaternionr(0.0, 0.0, -1.0,.003))]
+                                              airsim.Quaternionr(0.0, 0.0, -1.0, 0.003)),
+                              airsim.Pose(airsim.Vector3r(16.631, -38.537, -.9), # safe - aim @ roundabout center and can go L or R
+                                              airsim.Quaternionr(-0.005, 0.011, 0.296, 0.955)),
+                              airsim.Pose(airsim.Vector3r(-316.513, 144.906, -0.688), # safe - aim @ roundabout but better to go L
+                                              airsim.Quaternionr(0.0, 0.0, -1.0,.003)),
+                              airsim.Pose(airsim.Vector3r(317.114, -10.178, -0.688), # safe - cars to L and F
+                                              airsim.Quaternionr(0.0, 0.0, -1.0,.028)),
+                              airsim.Pose(airsim.Vector3r(33.322, -528.89, -0.688), # safe
+                                              airsim.Quaternionr(0.0, 0.0, -0.002,1.0))]
 
 
   def step(self, action):
@@ -154,7 +162,7 @@ class AirSimEnv(Env):
 
     self.client.setCarControls(self.car_controls)
 
-    time.sleep(self.seconds_between_steps)
+    time.sleep(self.seconds_pause_between_steps)
 
     # reward_t and state_t2
     img_response_list = self._request_sim_images([self.forward_cam_name])
@@ -170,8 +178,8 @@ class AirSimEnv(Env):
     current_y = car_info.kinematics_estimated.position.y_val
     # z is down+ and up-, so not need
 
-    # total distance travelled; Manhattan distance
-    self.distance_since_last_collision = math.sqrt((current_x - self.starting_x)**2 + (current_y - self.starting_y)**2)
+    # total distance travelled; Manhattan distance so as to not lower reward if turn right or left
+    self.distance_since_last_collision = abs(self.starting_x - current_x) + abs(self.starting_y - current_y )
 
     reward = self._get_reward(collision_info, car_info)
 
@@ -195,7 +203,7 @@ class AirSimEnv(Env):
     if self.episode_step_count >  self.steps_per_episode or \
        car_info.kinematics_estimated.position.z_val > -0.55 or \
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
-       car_info.speed > 25.0 or \
+       car_info.speed > 16.0 or \
        self.collisions_in_a_row > self.too_many_collisions_in_a_row or \
        car_info.kinematics_estimated.position.z_val < -2.5:
       done = True
@@ -205,9 +213,9 @@ class AirSimEnv(Env):
 
 
     # for debug
-    #if self.episode_step_count % 30 == 0:
-    #  print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
-    #                                                                              (self.episode_step_count / (time.time() -self.time_since_ep_start))))
+    if self.episode_step_count % 30 == 0:
+      print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
+                                                                                  (self.episode_step_count / (time.time() -self.time_since_ep_start))))
     return state_t2, reward, done, {}
 
   def reset(self):
@@ -263,21 +271,22 @@ class AirSimEnv(Env):
     if collision_info.object_id != -1 or \
        (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0):  #-1 if not currently colliding
       self.distance_since_last_collision = 0.0
-      return -1.0
+      #print(-1.0)
+      return -1.0 
     else:
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.99
+      w_dist = 0.975
       assert w_dist <= 1.0
 
       # hit 1.0 reward @ 2kunits
-      total_distance_contrib = w_dist * max(0, min(1.0, (self.distance_since_last_collision / 2000 )))
+      total_distance_contrib = w_dist * max(0, min(1.0, (self.distance_since_last_collision / 300 )))
 
       # slight reward for steering straight, i.e., only turn if necessary in long term
       w_non0_steering = 1.0-w_dist
 
       # note: steering [-1, 1], so w/ 5 steering angles, have: {-1., -0.5, 0., .5, 1.}
       # this means the decrease in reward (never penalty though) is linear deviate from 0. steering
-      steering_contrib = w_non0_steering * (1 - abs(self.car_controls.steering))
+      steering_contrib = w_non0_steering * (1.0 - abs(self.car_controls.steering))
 
 
       # for debug
@@ -319,6 +328,9 @@ class AirSimEnv(Env):
     img = img[self.first_row_idx : self.last_row_idx]
 
     # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
+
+    # note: could leave as 1d array cutoff frac_top_to_drop*height first many cols and
+    # then do multiprocessing?
     if len(img.shape) ==  2 :
       if self.PHI is not None:
         for row_idx in range(0, img.shape[0]):
