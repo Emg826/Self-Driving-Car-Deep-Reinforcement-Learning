@@ -8,8 +8,9 @@
   "SettingsVersion": 1.2,
   "SimMode": "Car",
   "RpcEnabled": true,
+  "ViewMode": "SpringArmChase",
   "EngineSound": false,
-  "ClockSpeed": 1,
+  "ClockSpeed": 1.0,
   "CameraDefaults": {
     "CaptureSettings": [{
       "ImageType": 0,
@@ -19,12 +20,10 @@
     },
     {
       "ImageType": 1,
-      "Width": 640
-      "Height": 384
+      "Width": 640,
+      "Height": 384,
       "FOV_Degrees": 120
-    }],
-    "X": -10, "Y": 0, "Z": -0.5,
-    "Pitch": -3, "Roll": 0, "Yaw": 0
+    }]
   }           
 }
 
@@ -59,9 +58,7 @@ import keras.backend as K
 cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
 K.set_session(K.tf.Session(config=cfg))
 
-# 40 ft (which is <= cond) is cutoff of sensor; @ 12mph (17.6 ft/s),
-# would take about 2 seconds to reach end of current img
-#295 = 255 + 40 && sqrt(40) = 6.32
+# have to be careful not to make PHI too complex, else decr num steps per IRL second
 PHI = lambda pixel: min(255.0, 2048 / pixel)
 
 
@@ -72,6 +69,7 @@ env = AirSimEnv(num_steering_angles=3,
                       fraction_of_top_of_img_to_cutoff=0.37,
                       fraction_of_bottom_of_img_to_cutoff=0.47,
                       seconds_pause_between_steps=0.00,  # so as to prevent extreme case of 1000 steps per second (if that was possible)
+                      seconds_between_collision_in_sim_and_register=2.5,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_pixels=PHI)
 
 
@@ -95,11 +93,14 @@ model.add(Activation('relu'))
 model.add(Conv2D(32, kernel_size=3, strides=2))
 model.add(Activation('relu'))
 
+model.add(Conv2D(32, kernel_size=3, strides=2))
+model.add(Activation('relu'))
+
 model.add(Flatten())
-model.add(Dense(32, activity_regularizer=l2(0.01)))
+model.add(Dense(32, activity_regularizer=l2(0.001)))
 model.add(Activation('sigmoid'))
 
-model.add(Dense(64, activity_regularizer=l2(0.01)))
+model.add(Dense(64, activity_regularizer=l2(0.001)))
 model.add(Activation('sigmoid'))
 
 model.add(Dense(num_steering_angles))
@@ -132,7 +133,7 @@ ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
 
 ddqn_agent.compile(Adam(lr=1e-5), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1130_3.h5'
+weights_filename = 'ddqn_collision_avoidance_1201_03.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 

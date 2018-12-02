@@ -4,13 +4,13 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
 """
 
 """ Copy and paste this into your settings.json (which hould be in your Documents folder)
-
 {
   "SettingsVersion": 1.2,
   "SimMode": "Car",
   "RpcEnabled": true,
+  "ViewMode": "SpringArmChase",
   "EngineSound": false,
-  "ClockSpeed": 1,
+  "ClockSpeed": 1.0,
   "CameraDefaults": {
     "CaptureSettings": [{
       "ImageType": 0,
@@ -20,14 +20,13 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
     },
     {
       "ImageType": 1,
-      "Width": 640
-      "Height": 384
+      "Width": 640,
+      "Height": 384,
       "FOV_Degrees": 120
-    }],
-    "X": -10, "Y": 0, "Z": -0.5,
-    "Pitch": -3, "Roll": 0, "Yaw": 0
+    }]
   }           
 }
+
 
 """
 
@@ -53,6 +52,7 @@ class AirSimEnv(Env):
                    fraction_of_top_of_img_to_cutoff,
                    fraction_of_bottom_of_img_to_cutoff,
                    seconds_pause_between_steps=0.0,
+                   seconds_between_collision_in_sim_and_register=2.5,
                    lambda_function_to_apply_to_pixels= None):
     """
     :param seconds_pause_between_steps: tune to reflect what you think real world performance
@@ -64,10 +64,10 @@ class AirSimEnv(Env):
     a do nothing function.
     """
     self.seconds_pause_between_steps = seconds_pause_between_steps
-    
+    self.seconds_between_collision_in_sim_and_register = seconds_between_collision_in_sim_and_register
     # image stuff
     self.PHI = lambda_function_to_apply_to_pixels  # PHI from DQN algorithm
-
+    #print('init env')
     self.first_row_idx = int(settings_json_image_h * fraction_of_top_of_img_to_cutoff)
     self.last_row_idx = int(settings_json_image_h * (1-fraction_of_bottom_of_img_to_cutoff))
     
@@ -89,7 +89,7 @@ class AirSimEnv(Env):
 
     # collision info for emergency resets and reward func calc
     self.collisions_in_a_row = 0
-    self.too_many_collisions_in_a_row = 3 # note: if stuck, then collisions will keep piling on
+    self.max_acceptable_collisions_in_a_row = 3 # note: if stuck, then collisions will keep piling on
     # also collisions being stuck can cause glitch through map 
     
     self.obj_id_of_last_collision = -123456789  # anything <-1 is unassociated w/ an obj in sim (afaik)
@@ -138,6 +138,21 @@ class AirSimEnv(Env):
                               airsim.Pose(airsim.Vector3r(33.322, -528.89, -0.688), # safe
                                               airsim.Quaternionr(0.0, 0.0, -0.002,1.0))]
 
+    #  instead of driving about aimlessly, will try to arrive to 1 destination from 1 starting point
+    self.beginning_coords = airsim.Pose(airsim.Vector3r(316.574,-2.870,-.7),  # safe
+                                                  airsim.Quaternionr(0.0,0.0,-0.967,0.253))
+    self.ending_coords = airsim.Vector3r(-295.097,-254.276,-.7)
+
+    # units are ? 
+    self.ending_circle_radius = 15.0 # if car in circle w/ this radius, then car has arrived @ destination
+    
+    self.min_distance_need_to_travel = self._manhattan_distance(self.ending_coords.x_val,
+                                                                                         self.beginning_coords.position.x_val ,
+                                                                                         self.ending_coords.y_val,
+                                                                                         self.beginning_coords.position.y_val)
+    
+    print('The car will need to travel {} simulation units to arrive at the destination'.format(self.min_distance_need_to_travel))
+                                                  
 
   def step(self, action):
     """
@@ -166,18 +181,15 @@ class AirSimEnv(Env):
     img_response_list = self._request_sim_images([self.forward_cam_name])
     collision_info = self.client.simGetCollisionInfo()
     car_info = self.client.getCarState()
-
-    
     
     state_t2 = self._make_preprocessed_depth_planner_image(img_response_list)
 
-
-    current_x = car_info.kinematics_estimated.position.x_val
-    current_y = car_info.kinematics_estimated.position.y_val
+    # from when car would drive aimlessly
+    #current_x = car_info.kinematics_estimated.position.x_val
+    #current_y = car_info.kinematics_estimated.position.y_val
     # z is down+ and up-, so not need
-
     # total distance travelled; Manhattan distance so as to not lower reward if turn right or left
-    self.distance_since_last_collision = abs(self.starting_x - current_x) + abs(self.starting_y - current_y )
+    #self.distance_since_last_collision = abs(self.starting_x - current_x) + abs(self.starting_y - current_y )  
 
     reward = self._get_reward(collision_info, car_info)
 
@@ -197,24 +209,28 @@ class AirSimEnv(Env):
     # done if episode timer runs out (1) OR if fallen into oblilvion (2)
     # OR if spinning out of control (3) OR if knocked into the stratosphere (4)
     done = False
-
     if self.episode_step_count >  self.steps_per_episode or \
        car_info.kinematics_estimated.position.z_val > -0.55 or \
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
-       car_info.speed > 16.0 or \
-       self.collisions_in_a_row > self.too_many_collisions_in_a_row or \
+       car_info.speed > 17.0 or \
+       self.collisions_in_a_row > self.max_acceptable_collisions_in_a_row or \
        car_info.kinematics_estimated.position.z_val < -2.5:
       done = True
 
     self.client.simPause(True)  # pause to do backend stuff
     self.episode_step_count += 1
 
-
     # for debug
     if self.episode_step_count % 30 == 0:
       print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
                                                                                   (self.episode_step_count / (time.time() -self.time_since_ep_start))))
+
+    if self._arrived_at_destination(car_info):
+      done = True
+      reward = 1.0
+      
     return state_t2, reward, done, {}
+
 
   def reset(self):
     """
@@ -225,16 +241,14 @@ class AirSimEnv(Env):
     self.client.simPause(True)
     self.client.armDisarm(True)
     self.client.reset()
-    reset_pose = self.reset_poses[random.randint(0, len(self.reset_poses)-1)]
+    #reset_pose = self.reset_poses[random.randint(0, len(self.reset_poses)-1)]  # from when would drive aimlessly
 
-    self.client.simSetVehiclePose(pose=reset_pose,
+    self.client.simSetVehiclePose(pose=self.beginning_coords,
                                            ignore_collison=True)
 
-    self.starting_x = reset_pose.position.x_val
-    self.starting_y = reset_pose.position.y_val
-    
-    self.distance_since_last_collision = 0.0
-    print(reset_pose)
+    #self.starting_x = reset_pose.position.x_val  # from when would drive aimlessly
+    #self.starting_y = reset_pose.position.y_val
+    #self.distance_since_last_collision = 0.0
 
     self.episode_step_count = 0
     self.collisions_in_a_row = 0
@@ -266,12 +280,35 @@ class AirSimEnv(Env):
     # collision id is finnicky; sometimes it will not register
     # like has_collided, object_name does not reset to '' after uncollide, but it does tell if colliding w/ new obj
     # and when object_id does not register, so it is more useful than has_collided
-    if collision_info.object_id != -1 or \
-       (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0):  #-1 if not currently colliding
+    reward = 0.0
+
+    # using manhattan distance from destination/ending_coords 
+    # distance from destination; using destination and current coordintates
+    distance_from_destination =  self._manhattan_distance(car_info.kinematics_estimated.position.x_val,
+                                                                              self.ending_coords.x_val,
+                                                                               car_info.kinematics_estimated.position.y_val,
+                                                                               self.ending_coords.y_val)
+    # id -1 if unnamed obj; not imply not colliding, just unnamed
+    # if collided with something with a name
+    sec_since_last_collision = time.time() -  collision_info.time_stamp*10**(-9) 
+    if sec_since_last_collision < self.seconds_between_collision_in_sim_and_register and collision_info.time_stamp != 0.0:  # irl seconds
+      reward = -1.0
       self.distance_since_last_collision = 0.0
-      #print(-1.0)
-      return -1.0 
+
+    # if hit curb or an unnamed object
+    elif (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0) or \
+         (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
+      self.distance_since_last_collision = 0.0
+      reward = -0.1
+     
+    # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
+    elif (self.min_distance_need_to_travel - distance_from_destination) <  50.0 and self.episode_step_count > 100:
+      reward = -1.0
+
     else:
+      """
+      # From when car would drive aimlessly
+
       # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
       w_dist = 0.970
       assert w_dist <= 1.0
@@ -290,6 +327,14 @@ class AirSimEnv(Env):
       # for debug
       #print(self.distance_since_last_collision, total_distance_contrib + steering_contrib)
       return total_distance_contrib + steering_contrib
+      """
+      # take max just in case car starts to drive in opposite direction from start
+      reward = max(0.0, 1.0 - (distance_from_destination**2 / self.min_distance_need_to_travel**2 ))    # 1 - proportion saying how far along the car is to arriving @ destination
+
+    # for debug
+    #print('reward',reward)
+    return reward
+      
 
   def _request_sim_images(self, cam_names):
     """
@@ -410,3 +455,28 @@ class AirSimEnv(Env):
                                         airsim.Vector3r(0.0, 0.0, 0.0))
     self.client.simSetCameraOrientation(self.backward_cam_name,
                                         airsim.Vector3r(0.0, 0.0, 11.5))
+
+  def _manhattan_distance(self, x0, x1, y0, y1):
+    return abs(x0 - x1) + abs(y0 - y1)
+
+  def _euclidean_distance(self, x0, x1, y0, y1):
+    return math.sqrt( (x1 - x0)**2 + (y1 - y0)**2 )
+
+  def _arrived_at_destination(self, car_info):
+    """
+    Check if a car has arrived at the destination by checking if the car
+    is within the end zone, which is a circle. Check if distance from end
+    zone is < radius
+
+    :param car_info: get by getCarState() via airsim client
+    """
+    distance_from_destination = self._euclidean_distance(car_info.kinematics_estimated.position.x_val,
+                                                                            self.ending_coords.x_val,
+                                                                            car_info.kinematics_estimated.position.y_val,
+                                                                            self.ending_coords.y_val)
+                                                         
+    if distance_from_destination < self.ending_circle_radius:
+      return True
+    else:
+      return False
+    
