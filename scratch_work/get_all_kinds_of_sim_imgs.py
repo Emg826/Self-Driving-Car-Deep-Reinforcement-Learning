@@ -36,6 +36,7 @@ img = airsim.list_to_2d_float_array(sim_img_response[0].image_data_float, sim_im
 # 40 ft (which is <= cond) is cutoff of sensor; @ 12mph (17.6 ft/s),
 # would take about 2 seconds to reach end of current img
 #295 = 255 + 40 && sqrt(40) = 6.32
+"""
 PHI = lambda pixel: min(255.0, ( 295.0 / (math.sqrt(max(0.001, pixel -0.475)))) - 6.32) if pixel <= 40.0 else 0.0
 
 # apply PHI to each pixel
@@ -49,68 +50,47 @@ print(img[int(img.shape[0]*.7):int(img.shape[0]*.8)])
 #cv2.imwrite('depthPlannerMin255orMax0or80timeslnx-pt5.jpg', img)
 cv2.imwrite('depthPlannerMin0orMax0or70timeslnabsxminuspt7.jpg', img)
 cv2.imwrite('minus_top_third_and_minus_bottom_tenth.jpg', img[int(img.shape[0]*0.20) : int(img.shape[0]*0.8)] )
+"""
 
-""" # don't need the below
 sim_img_responses = client.simGetImages([airsim.ImageRequest(camera_name='0',
                                                                                       image_type=airsim.ImageType.Scene,
-                                                                                      pixels_as_float=False,
+                                                                                      pixels_as_float=True,
                                                                                       compress=False),
                                                           airsim.ImageRequest(camera_name='0',
                                                                                       image_type=airsim.ImageType.DepthPlanner,
-                                                                                      pixels_as_float=False,
-                                                                                      compress=False),
-                                                          airsim.ImageRequest(camera_name='0',
-                                                                                      image_type=airsim.ImageType.DepthPerspective,
-                                                                                      pixels_as_float=False,
-                                                                                      compress=False),
-                                                          airsim.ImageRequest(camera_name='0',
-                                                                                      image_type=airsim.ImageType.DepthVis,
-                                                                                      pixels_as_float=False,
-                                                                                      compress=False),
-                                                          airsim.ImageRequest(camera_name='0',
-                                                                                      image_type=airsim.ImageType.DisparityNormalized,
-                                                                                      pixels_as_float=False,
+                                                                                      pixels_as_float=True,
                                                                                       compress=False),
                                                           airsim.ImageRequest(camera_name='0',
                                                                                       image_type=airsim.ImageType.Segmentation,
                                                                                       pixels_as_float=False,
-                                                                                      compress=False),
-                                                          airsim.ImageRequest(camera_name='0',
-                                                                                      image_type=airsim.ImageType.SurfaceNormals,
-                                                                                      pixels_as_float=False,
-                                                                                      compress=False),
-                                                          airsim.ImageRequest(camera_name='0',
-                                                                                      image_type=airsim.ImageType.Infrared,
-                                                                                      pixels_as_float=False,
-                                                                                      compress=False),])
+                                                                                      compress=False)])
 
 # raw imgs
+alter_pixel = lambda pixel:  min(4096.0 / (pixel+11.0), 255.0)
 
-img_names = ['Scene', 'DepthPlanner', 'DepthPerspective', 'DepthVis', 'DisparityNormalized', 'Segmentation', 'SurfaceNormals', 'Infrared']
+img_names = ['Scene', 'DepthPlanner', 'Segmentation']
 for img_response_obj, img_name in zip(sim_img_responses, img_names):
   height = img_response_obj.height
   width = img_response_obj.width
-  img = np.fromstring(img_response_obj.image_data_uint8, dtype=np.uint8).reshape(height, width, 4)
+
+  img = None
+  if img_name == 'DepthPlanner' or img_name == 'Scene':
+    img = airsim.list_to_2d_float_array(img_response_obj.image_data_float, width, height)
+    if img_name == 'Scene':
+      print(img.shape)
+      img = img * 255.0   # b4 this mult, all val in [0, 1]
+      
+
+    else:
+      # apply pxiel wise filter
+      for row_idx in range(0, img.shape[0]):
+        for col_idx in  range(0, img.shape[1]):
+          img[row_idx][col_idx] = alter_pixel(img[row_idx][col_idx])
+
+
+  if img_name == 'Segmentation':
+    #img = img * 255.0   # all vals 0 < .. < 1.0 otherwise
+    img = np.fromstring(img_response_obj.image_data_uint8, dtype=np.uint8).reshape(height, width, 4)
+    
   cv2.imwrite('{}.jpg'.format(img_name), img)
-  cv2.imwrite('grayscale_{}.jpg'.format(img_name), img)
-
-
-# any experiments you'd want to do          
-img_names = ['Scene', 'DepthPlanner', 'DepthPerspective', 'DepthVis', 'DisparityNormalized']
-
-alter_pixel = lambda pixel_value: int( 255.0 * (1.0 / (1.0 + math.exp(-1.0 * (math.sqrt(2.71 * float(pixel_value)) - 4.5) ))) )
-for img_response_obj, img_name in zip(sim_img_responses, img_names):
-  height = img_response_obj.height
-  width = img_response_obj.width
-                   
-  np_arr_of_img_2d = cv2.cvtColor(np.fromstring(img_response_obj.image_data_uint8, dtype=np.uint8).reshape(height, width, 4),
-                                                                                          cv2.COLOR_BGR2GRAY)
-
-  for row_idx in range(0, np_arr_of_img_2d.shape[0]):
-    for col_idx in  range(0, np_arr_of_img_2d.shape[1]):
-      np_arr_of_img_2d[row_idx][col_idx] = alter_pixel(np_arr_of_img_2d[row_idx][col_idx])
-  
-  cv2.imwrite('experiment_{}.jpg'.format(img_name), np_arr_of_img_2d)
-"""
-
 

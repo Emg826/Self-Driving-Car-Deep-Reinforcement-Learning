@@ -52,6 +52,9 @@ from rl.callbacks import ModelIntervalCheckpoint  # https://github.com/keras-rl/
 from airsim_env import AirSimEnv
 from skipping_memory import SkippingMemory
 
+np.random.seed(7691)
+random.seed(6113)
+
 
 # This block solved the "CUBLAS_STATUS_ALLOC_FAILED" CUDA issue (https://stackoverflow.com/a/52762075)
 import keras.backend as K
@@ -59,17 +62,17 @@ cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
 K.set_session(K.tf.Session(config=cfg))
 
 # have to be careful not to make PHI too complex, else decr num steps per IRL second
-PHI = lambda pixel: min(255.0, 2048 / pixel)
+PHI = lambda pixel:  min(4096.0 / (pixel+11.0), 255.0)
 
 
 env = AirSimEnv(num_steering_angles=3,
                       max_num_steps_in_episode=10**4,
-                      settings_json_image_w=640,  # from settings.json
-                      settings_json_image_h=384,
-                      fraction_of_top_of_img_to_cutoff=0.37,
-                      fraction_of_bottom_of_img_to_cutoff=0.42,
+                      settings_json_image_w=512,  # from settings.json
+                      settings_json_image_h=256,
+                      fraction_of_top_of_img_to_cutoff=0.4,
+                      fraction_of_bottom_of_img_to_cutoff=0.45,
                       seconds_pause_between_steps=0.00,  # so as to prevent extreme case of 1000 steps per second (if that was possible)
-                      seconds_between_collision_in_sim_and_register=2.0,  # note avg 4.12 steps per IRL sec on school computer
+                      seconds_between_collision_in_sim_and_register=1.5,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_pixels=PHI)
 
 
@@ -85,8 +88,10 @@ STACK_EVERY_N_FRAMES = 2
 
 input_shape = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + INPUT_SHAPE
 
+
+# input is 38, 512
 model = Sequential()
-model.add(LocallyConnected2D(72, kernel_size=(6,8), strides=(5, 7),
+model.add(LocallyConnected2D(64, kernel_size=(10, 10), strides=(8, 8),
                  input_shape=input_shape, data_format = 'channels_first'))
 model.add(Activation('relu'))
 
@@ -125,12 +130,12 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 dqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
-                                  policy=policy, gamma=0.98, train_interval=4,  # gamma of 97 because a lot can change from now til end of car run
-                                  nb_steps_warmup=250)
+                                  policy=policy, gamma=0.9999, train_interval=4,  # gamma of 97 because a lot can change from now til end of car run
+                                  nb_steps_warmup=2000)
 
 dqn_agent.compile(Adam(lr=0.0001), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_1207.h5'
+weights_filename = 'dqn_collision_avoidance_1207_03.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 
