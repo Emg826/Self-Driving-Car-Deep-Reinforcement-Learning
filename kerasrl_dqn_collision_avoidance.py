@@ -40,7 +40,7 @@ import random
 import math
 
 from keras.models import Sequential
-from keras.layers import Dense, MaxPooling2D, Flatten, Conv2D, BatchNormalization, Activation
+from keras.layers import Dense, MaxPooling2D, Flatten, Conv2D, LocallyConnected2D, Activation
 from keras.optimizers import Adam
 from keras.regularizers import l2
 
@@ -67,9 +67,9 @@ env = AirSimEnv(num_steering_angles=3,
                       settings_json_image_w=640,  # from settings.json
                       settings_json_image_h=384,
                       fraction_of_top_of_img_to_cutoff=0.37,
-                      fraction_of_bottom_of_img_to_cutoff=0.47,
+                      fraction_of_bottom_of_img_to_cutoff=0.42,
                       seconds_pause_between_steps=0.00,  # so as to prevent extreme case of 1000 steps per second (if that was possible)
-                      seconds_between_collision_in_sim_and_register=2.5,  # note avg 4.12 steps per IRL sec on school computer
+                      seconds_between_collision_in_sim_and_register=2.0,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_pixels=PHI)
 
 
@@ -80,27 +80,24 @@ INPUT_SHAPE = env.img_shape
 NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 4  # idea: it was taking too long for appearance
 # of obstacle to show up in stacked states? switchgin back to sequential memory
 
-#NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 4  # reward_delay * this = prev sec as input
-#STACK_EVERY_N_FRAMES = 2
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 4  # reward_delay * this = prev sec as input
+STACK_EVERY_N_FRAMES = 2
 
 input_shape = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + INPUT_SHAPE
 
 model = Sequential()
-model.add(Conv2D(32, kernel_size=3, strides=2,
+model.add(LocallyConnected2D(72, kernel_size=(6,8), strides=(5, 7),
                  input_shape=input_shape, data_format = 'channels_first'))
 model.add(Activation('relu'))
 
-model.add(Conv2D(32, kernel_size=3, strides=2))
-model.add(Activation('relu'))
-
-model.add(Conv2D(32, kernel_size=3, strides=2))
+model.add(Conv2D(96, kernel_size=4, strides=3))
 model.add(Activation('relu'))
 
 model.add(Flatten())
-model.add(Dense(32, activity_regularizer=l2(0.001)))
+model.add(Dense(72, activity_regularizer=l2(0.001)))
 model.add(Activation('sigmoid'))
 
-model.add(Dense(64, activity_regularizer=l2(0.001)))
+model.add(Dense(128, activity_regularizer=l2(0.001)))
 model.add(Activation('sigmoid'))
 
 model.add(Dense(num_steering_angles))
@@ -122,37 +119,37 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               value_max=1.0, # start off 100% random
                               value_min=0.05,  # get to random action x% of time
                               value_test=0.0,  # when testing, take rand action this val *100 % of time
-                              nb_steps=int(num_total_training_steps/2)) # of time steps to go from epsilon=value_max to =value_min
+                              nb_steps=int(math.sqrt(num_total_training_steps))) # of time steps to go from epsilon=value_max to =value_min
 
 
-ddqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
+dqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
-                                  policy=policy, gamma=0.99, train_interval=4,
+                                  policy=policy, gamma=0.98, train_interval=4,  # gamma of 97 because a lot can change from now til end of car run
                                   nb_steps_warmup=250)
 
-ddqn_agent.compile(Adam(lr=1e-5), metrics=['mae']) # not use mse since |reward| <= 1.0
+dqn_agent.compile(Adam(lr=0.0001), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'ddqn_collision_avoidance_1201_03.h5'
+weights_filename = 'dqn_collision_avoidance_1207.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 
 if want_to_train is True:
 
   # note: interval's units are episode_steps
-  callbacks_list = [ModelIntervalCheckpoint(filepath=weights_filename, verbose=5, interval=750)]
+  callbacks_list = [ModelIntervalCheckpoint(filepath=weights_filename, verbose=5, interval=400)]
 
   if train_from_weights_in_weights_filename:
     try:
-      ddqn_agent.load_weights(weights_filename)
-      print('Successfully loaded DDQN weights')
+      dqn_agent.load_weights(weights_filename)
+      print('Successfully loaded DQN weights')
     except:
-      print('Failed to load DDQN weights')
+      print('Failed to load DQN weights')
 
-  ddqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
+  dqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
                       visualize=False, verbose=2)
 
-  ddqn_agent.save_weights(weights_filename)
+  dqn_agent.save_weights(weights_filename)
 else: # else want to test
-    ddqn_agent.load_weights(weights_filename)
-    ddqn_agent.test(env, nb_episodes=12, visualize=True)
+    dqn_agent.load_weights(weights_filename)
+    dqn_agent.test(env, nb_episodes=12, visualize=True)

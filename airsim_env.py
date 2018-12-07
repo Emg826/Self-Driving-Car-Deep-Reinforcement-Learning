@@ -85,7 +85,7 @@ class AirSimEnv(Env):
 
     # in-sim episode handling
     self.episode_step_count = 0
-    self.steps_per_episode = max_num_steps_in_episode # right hand num is in in-game seconds
+    self.steps_per_episode = max_num_steps_in_episode 
 
     # collision info for emergency resets and reward func calc
     self.collisions_in_a_row = 0
@@ -104,8 +104,7 @@ class AirSimEnv(Env):
     self.starting_x = 0.0
     self.starting_y = 0.0
     
-    self.time_since_ep_start = 2**31  # only used for debug and steps/second measurement,
-    # not for tracking progress in sim; note: sim steps per real life seconds is ~6
+    
 
     self.left_cam_name = '2'
     self.right_cam_name = '1'
@@ -139,19 +138,34 @@ class AirSimEnv(Env):
                                               airsim.Quaternionr(0.0, 0.0, -0.002,1.0))]
 
     #  instead of driving about aimlessly, will try to arrive to 1 destination from 1 starting point
+
     self.beginning_coords = airsim.Pose(airsim.Vector3r(316.574,-2.870,-.7),  # safe
                                                   airsim.Quaternionr(0.0,0.0,-0.967,0.253))
-    self.ending_coords = airsim.Vector3r(-295.097,-254.276,-.7)
+    # too far ?
+    #self.ending_coords = airsim.Vector3r(-295.097,-254.276,-.7)
+   
+    self.ending_coords = airsim.Vector3r(73.728,-51.480,-.7)
+
 
     # units are ? 
-    self.ending_circle_radius = 15.0 # if car in circle w/ this radius, then car has arrived @ destination
+    self.ending_circle_radius =8.0 # if car in circle w/ this radius, then car has arrived @ destination
     
-    self.min_distance_need_to_travel = self._manhattan_distance(self.ending_coords.x_val,
+    self.total_distance_to_destination = self._manhattan_distance(self.ending_coords.x_val,
                                                                                          self.beginning_coords.position.x_val ,
                                                                                          self.ending_coords.y_val,
                                                                                          self.beginning_coords.position.y_val)
+
+    self.current_distance_from_destination = self.total_distance_to_destination
+    self.episode_time_in_simulation_secs = 1.0   # tracks time between unpause and pause in step; used
+    # in reward function; want
+    self.current_distance_travelled_towards_destination = 0.0
     
-    print('The car will need to travel {} simulation units to arrive at the destination'.format(self.min_distance_need_to_travel))
+    self.episode_time_in_irl_seconds = 0.0  # only used for debug and steps/second measurement,
+    # not for tracking progress in sim; note: sim steps per real life seconds is ~6
+
+
+    
+    print('The car will need to travel {} simulation meters to arrive at the destination'.format(self.total_distance_to_destination))
                                                   
 
   def step(self, action):
@@ -172,6 +186,7 @@ class AirSimEnv(Env):
     self.car_controls.steering = steering_angle
 
     self.client.simPause(False)  # unpause AirSim
+    sim_unpaused_time = time.time()  # used to track time sim is unpaused
 
     self.client.setCarControls(self.car_controls)
 
@@ -191,7 +206,23 @@ class AirSimEnv(Env):
     # total distance travelled; Manhattan distance so as to not lower reward if turn right or left
     #self.distance_since_last_collision = abs(self.starting_x - current_x) + abs(self.starting_y - current_y )  
 
+
+    self.client.simPause(True)  # pause to do backend stuff
+    self.episode_time_in_simulation_secs += time.time() - sim_unpaused_time
+
+    self.current_distance_from_destination =  self._manhattan_distance(car_info.kinematics_estimated.position.x_val,
+                                                                                                self.ending_coords.x_val,
+                                                                                                 car_info.kinematics_estimated.position.y_val,
+                                                                                                 self.ending_coords.y_val)
+    self.current_distance_travelled_from_origin = self._manhattan_distance(car_info.kinematics_estimated.position.x_val,
+                                                                                                self.beginning_coords.position.x_val ,
+                                                                                                 car_info.kinematics_estimated.position.y_val,
+                                                                                                 self.beginning_coords.position.y_val )
+    self.current_distance_travelled_towards_destination = self.total_distance_to_destination - self.current_distance_from_destination
+
+    # know distance travelled and know episode time (in sim secs) so far
     reward = self._get_reward(collision_info, car_info)
+
 
     # potential probelm of getting stuck, so track number of collisions in a row w/ same obj
     # measure in time steps rather than time because nn can take long, variable time to train
@@ -217,13 +248,16 @@ class AirSimEnv(Env):
        car_info.kinematics_estimated.position.z_val < -2.5:
       done = True
 
-    self.client.simPause(True)  # pause to do backend stuff
+    # using manhattan distance from destination/ending_coords 
+    # distance from destination; using destination and current coordintates
+
+    
     self.episode_step_count += 1
 
     # for debug
     if self.episode_step_count % 30 == 0:
       print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
-                                                                                  (self.episode_step_count / (time.time() -self.time_since_ep_start))))
+                                                                                  (self.episode_step_count / (time.time() -self.episode_time_in_irl_seconds))))
 
     if self._arrived_at_destination(car_info):
       done = True
@@ -254,8 +288,12 @@ class AirSimEnv(Env):
     self.collisions_in_a_row = 0
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
 
+    self.episode_time_in_simulation_secs = 0.0 
+
     self.client.simPause(False)
-    self.time_since_ep_start = time.time()  # again, for debug purposes
+    self.episode_time_in_irl_seconds = time.time()  # again, for debug purposes
+    self.current_distance_from_destination = self.total_distance_to_destination
+    self.episode_time_in_simulation_secs = 1.0
     
     img_response_list = self._request_sim_images([self.forward_cam_name])
     return self._make_preprocessed_depth_planner_image(img_response_list) # just to have an initial state?
@@ -282,12 +320,7 @@ class AirSimEnv(Env):
     # and when object_id does not register, so it is more useful than has_collided
     reward = 0.0
 
-    # using manhattan distance from destination/ending_coords 
-    # distance from destination; using destination and current coordintates
-    distance_from_destination =  self._manhattan_distance(car_info.kinematics_estimated.position.x_val,
-                                                                              self.ending_coords.x_val,
-                                                                               car_info.kinematics_estimated.position.y_val,
-                                                                               self.ending_coords.y_val)
+
     # id -1 if unnamed obj; not imply not colliding, just unnamed
     # if collided with something with a name
     sec_since_last_collision = time.time() -  collision_info.time_stamp*10**(-9) 
@@ -302,7 +335,7 @@ class AirSimEnv(Env):
       reward = -0.1
      
     # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
-    elif (self.min_distance_need_to_travel - distance_from_destination) <  50.0 and self.episode_step_count > 100:
+    elif (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
       reward = -1.0
 
     else:
@@ -328,13 +361,27 @@ class AirSimEnv(Env):
       #print(self.distance_since_last_collision, total_distance_contrib + steering_contrib)
       return total_distance_contrib + steering_contrib
       """
-      # take max just in case car starts to drive in opposite direction from start
-      reward = max(0.0, 1.0 - (distance_from_destination**2 / self.min_distance_need_to_travel**2 ))    # 1 - proportion saying how far along the car is to arriving @ destination
+      current_average_meters_per_sim_secs = self.current_distance_travelled_from_origin /  self.episode_time_in_simulation_secs
 
-    # for debug
-    #print('reward',reward)
-    return reward
+
+      # time = distance / rate --- time to get from origin to end, at the average pace of the vehicle
+      current_estimate_of_sim_secs_from_beginning_get_to_destination = self.total_distance_to_destination / current_average_meters_per_sim_secs
+
+      # will go negative 
+      sim_secs_remaining_to_get_to_destination = current_estimate_of_sim_secs_from_beginning_get_to_destination - self.episode_time_in_simulation_secs
+
+      # will always be <= 0
+      time_reward = max(-1.0, min(0, sim_secs_remaining_to_get_to_destination / current_estimate_of_sim_secs_from_beginning_get_to_destination))    # 1 - proportion saying how far along the car is to arriving @ destination
+
+      # will always be >= 0
+      distance_reward = max(0.0, self.current_distance_travelled_towards_destination / self.total_distance_to_destination)
+
+      reward = time_reward + distance_reward
       
+    # for debug
+    print('reward',reward)
+    return reward
+
 
   def _request_sim_images(self, cam_names):
     """
@@ -470,12 +517,12 @@ class AirSimEnv(Env):
 
     :param car_info: get by getCarState() via airsim client
     """
-    distance_from_destination = self._euclidean_distance(car_info.kinematics_estimated.position.x_val,
+    current_distance_from_destination = self._euclidean_distance(car_info.kinematics_estimated.position.x_val,
                                                                             self.ending_coords.x_val,
                                                                             car_info.kinematics_estimated.position.y_val,
                                                                             self.ending_coords.y_val)
                                                          
-    if distance_from_destination < self.ending_circle_radius:
+    if current_distance_from_destination < self.ending_circle_radius:
       return True
     else:
       return False
