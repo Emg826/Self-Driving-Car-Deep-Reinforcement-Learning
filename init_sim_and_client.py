@@ -21,12 +21,14 @@ while True:
     for idx in range(0, len(running_sims)):
       running_sims[idx].terminate()
       running_sims[idx].wait()
+      time.sleep(2)
   running_sims = []
       
   if len(running_clients) != 0:
     for idx in range(0, len(running_clients)):
         running_clients[idx].terminate()
         running_clients[idx].wait()
+        time.sleep(2)
   running_clients = []
 
   
@@ -49,6 +51,7 @@ while True:
     if running_sims[0].poll() != None:
       running_clients[0].terminate()
       running_clients[0].wait()
+      time.sleep(1)
       running_sims[0].terminate()
       running_sims[0].wait()
 
@@ -57,6 +60,7 @@ while True:
     if running_clients[0].poll() != None:
       running_sims[0].terminate()
       running_sims[0].wait()
+      time.sleep(1)
       running_clients[0].terminate()
       running_clients[0].wait()
 

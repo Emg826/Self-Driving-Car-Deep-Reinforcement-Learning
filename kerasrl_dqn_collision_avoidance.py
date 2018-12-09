@@ -14,18 +14,19 @@
   "CameraDefaults": {
     "CaptureSettings": [{
       "ImageType": 0,
-      "Width": 1024,
-      "Height": 512,
+      "Width": 512,
+      "Height": 1137,
       "FOV_Degrees": 120
     },
     {
       "ImageType": 1,
-      "Width": 512,
-      "Height": 256,
+      "Width": 384,
+      "Height": 1536,
       "FOV_Degrees": 120
     }]
   }           
 }
+
 """
 # 5.0 steps per IRL second in NoDisplay and 3.77 in SpringArmChase, trying to inrc clockspeed to 1.25 from 1.0
 # the idea is that @ 1.0 speed and SpringArmChase, want same number of steps per IRL second as \
@@ -82,9 +83,9 @@ num_steering_angles = env.action_space.n
 NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 1
 STACK_EVERY_N_FRAMES = 1
 
-SCENE_INPUT_SHAPE = env.scene_input_shape + (1,)
-DEPTH_INPUT_SHAPE = env.depth_planner_input_shape + (1,)
-SENSOR_INPUT_SHAPE =  env.sensor_input_shape + (1,)
+SCENE_INPUT_SHAPE = env.SCENE_INPUT_SHAPE
+DEPTH_INPUT_SHAPE = env.DEPTH_PLANNER_INPUT_SHAPE
+SENSOR_INPUT_SHAPE =  env.SENSOR_INPUT_SHAPE
 
 print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 
@@ -101,7 +102,7 @@ scene_pool_1 = MaxPooling2D(pool_size=(2, 2))(scene_conv_1)
 scene_conv_2 = Conv2D(192, kernel_size=(4, 4), activation='relu', strides=(2, 2))(scene_pool_1)
 scene_pool_2 = MaxPooling2D(pool_size=(2, 2))(scene_conv_2)
 scene_conv_3 = Conv2D(192, kernel_size=(4, 4), activation='relu', strides=(2, 2))(scene_pool_2)
-scene_conv_4 = Conv2D(164, kernel_size=(2, 2), activation='relu', strides=(1, 1))(scene_conv_3)
+scene_conv_4 = Conv2D(155, kernel_size=(2, 2), activation='relu', strides=(1, 1))(scene_conv_3)
 scene_pool_4 = MaxPooling2D(pool_size=(2, 2))(scene_conv_4)
 scene_flat = Flatten()(scene_pool_4)
 
@@ -115,7 +116,7 @@ depth_conv_1 = Conv2D(100, kernel_size=(18, 18), activation='relu', strides=(5, 
 depth_pool_1 = MaxPooling2D(pool_size=(2, 2))(depth_conv_1)
 depth_conv_2 = Conv2D(90, kernel_size=(4, 4), activation='relu', strides=(2, 2), data_format='channels_last')(depth_pool_1)
 depth_pool_2 = MaxPooling2D(pool_size=(2, 2))(depth_conv_2)
-depth_conv_3 = Conv2D(80, kernel_size=(4, 4), activation='relu', strides=(2, 2), data_format='channels_last')(depth_pool_2)
+depth_conv_3 = Conv2D(75, kernel_size=(4, 4), activation='relu', strides=(2, 2), data_format='channels_last')(depth_pool_2)
 depth_pool_3 = MaxPooling2D(pool_size=(2, 2))(depth_conv_3)
 depth_flat = Flatten()(depth_pool_3)
 
@@ -135,15 +136,16 @@ x. linear velocity (x, y) # no accurate whatsoever (press ';' in sim to see)
 16-17. (x, y) coordinates of destination
 """
 sensor_input = Input(shape=SENSOR_INPUT_SHAPE)  # not much of a 'model', really...
-sensor_dense_1 =  Dense(SENSOR_INPUT_SHAPE[0] * SENSOR_INPUT_SHAPE[0], activation='sigmoid')(sensor_input)
+# SENSOR_INPUT_SHAPE[0] * SENSOR_INPUT_SHAPE[0]
+sensor_dense_1 =  Dense(192, activation='sigmoid')(sensor_input)
 sensor_output = Flatten()(sensor_dense_1)
 
 merge = concatenate([scene_flat, depth_flat, sensor_output])
 
 # interpretation/combination model
 #concatenate_1 (Concatenate)     (None, 5195)         0          
-merged_dense_1 = Dense(2048, activation='relu')(merge)
-merged_dense_2 = Dense(2048, activation='relu')(merged_dense_1)
+merged_dense_1 = Dense(1684, activation='sigmoid')(merge)
+merged_dense_2 = Dense(1684, activation='sigmoid')(merged_dense_1)
 merged_dense_3 = Dense(512, activation='softmax')(merged_dense_2)
 final_output = Dense(num_steering_angles, activation='sigmoid')(merged_dense_3)
 
@@ -171,16 +173,16 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               value_max=1.0, # start off 100% random
                               value_min=0.10,  # get to random action x% of time
                               value_test=0.05,  # MUST BE >0 else, for whatever reason, won't get random start
-                              nb_steps=int(math.sqrt(num_total_training_steps))) # of time steps to go from epsilon=value_max to =value_min
+                              nb_steps=50000) # of time steps to go from epsilon=value_max to =value_min
 
 
 dqn_agent = MDQNAgent(model=model, nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
-                                  enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
-                                  policy=policy, gamma=0.99, train_interval=4,  # gamma of 97 because a lot can change from now til end of car run
-                                  nb_steps_warmup=2000)
+                                  enable_dueling_network=False, target_model_update=1.0, # soft update parameter?
+                                  policy=policy, gamma=0.98, train_interval=4,  # gamma of 97 because a lot can change from now til end of car run
+                                  nb_steps_warmup=12, batch_size=4)
 
-dqn_agent.compile(Adam(lr=0.0001), metrics=['mae']) # not use mse since |reward| <= 1.0
+dqn_agent.compile(Adam(lr=0.01), metrics=['mae']) # not use mse since |reward| <= 1.0
 
 weights_filename = 'dqn_collision_avoidance_1209_05.h5'
 want_to_train = True

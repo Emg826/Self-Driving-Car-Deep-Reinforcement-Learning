@@ -55,24 +55,22 @@ class AbstractMDQNAgent(Agent):
         self.compiled = False
 
     def process_state_batch(self, state_batch):
-        batch = []
+        scene =[]
+        depth= []
+        sensor = []
+  
         for i in state_batch:
-            scene = i[0]
-            depth = i[1]
-            sensor = i[2]
 
-            # idx in batch is 1st, 
-            batch.append(scene.reshape(1, scene.shape[0], scene.shape[1], 1))
-            batch.append(depth.reshape(1, depth.shape[0], depth.shape[1], 1))
-            batch.append(sensor.reshape(1, sensor.shape[0], 1))
-            #print('BREAK')  # debug
-            break
+            scene.append(i[0])
+            depth.append(i[1])
+            sensor.append(i[2])
         
-        return batch
+        return [scene, depth, sensor]
 
     def compute_batch_q_values(self, state_batch):
         batch = self.process_state_batch(state_batch)
         q_values = self.model.predict_on_batch(batch)
+        print()
         print('Q values: ', q_values)
         assert q_values.shape == (len(state_batch), self.nb_actions)
         return q_values
@@ -275,7 +273,10 @@ class MDQNAgent(AbstractMDQNAgent):
             action_batch = []
             terminal1_batch = []
             state1_batch = []
+            ct = 0
             for e in experiences:
+                ct += 1
+                #print(ct)  # debug
                 state0_batch.append(e.state0)
                 state1_batch.append(e.state1)
                 reward_batch.append(e.reward)

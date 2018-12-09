@@ -14,18 +14,19 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
   "CameraDefaults": {
     "CaptureSettings": [{
       "ImageType": 0,
-      "Width": 1024,
-      "Height": 512,
+      "Width": 512,
+      "Height": 1137,
       "FOV_Degrees": 120
     },
     {
       "ImageType": 1,
-      "Width": 512,
-      "Height": 256,
+      "Width": 384,
+      "Height": 1536,
       "FOV_Degrees": 120
     }]
   }           
 }
+
 
 """
 
@@ -60,9 +61,9 @@ class AirSimEnv(Env):
     a do nothing function.
     """
             
-    SCENE_INPUT_SHAPE = (1137, 512)  # 1.0 / 0.245
-    DEPTH_PLANNER_INPUT_SHAPE = (1536, 384)  # 1.0 / 0.25 
-    SENSOR_INPUT_SHAPE = (17,)
+    self.SCENE_INPUT_SHAPE = (1137, 512, 1)  # 1.0 / 0.245
+    self.DEPTH_PLANNER_INPUT_SHAPE = (1536, 384, 1)  # 1.0 / 0.25 
+    self.SENSOR_INPUT_SHAPE = (17,1)
 
 
     
@@ -74,24 +75,24 @@ class AirSimEnv(Env):
     self.PHI = lambda_function_to_apply_to_depth_pixels  # PHI from DQN algorithm
 
 
-    self.first_scene_row_idx = int(SCENE_INPUT_SHAPE[0] * fraction_of_top_of_scene_to_drop)
-    self.last_scene_row_idx = int(SCENE_INPUT_SHAPE[0] * (1-fraction_of_bottom_of_scene_to_drop))
+    self.first_scene_row_idx = int(self.SCENE_INPUT_SHAPE[0] * fraction_of_top_of_scene_to_drop)
+    self.last_scene_row_idx = int(self.SCENE_INPUT_SHAPE[0] * (1-fraction_of_bottom_of_scene_to_drop))
 
-    self.first_depth_planner_row_idx = int(DEPTH_PLANNER_INPUT_SHAPE[0] * fraction_of_top_of_depth_to_drop)
-    self.last_depth_planner_row_idx = int(DEPTH_PLANNER_INPUT_SHAPE[0] * (1-fraction_of_bottom_of_depth_to_drop))
+    self.first_depth_planner_row_idx = int(self.DEPTH_PLANNER_INPUT_SHAPE[0] * fraction_of_top_of_depth_to_drop)
+    self.last_depth_planner_row_idx = int(self.DEPTH_PLANNER_INPUT_SHAPE[0] * (1-fraction_of_bottom_of_depth_to_drop))
 
-    print('frac bottom depth', fraction_of_bottom_of_depth_to_drop)  # debug
-    print('1st row idx scene', self.first_scene_row_idx)  # debug
-    print('last row idx depth', self.last_depth_planner_row_idx)   # debug
+    #print('frac bottom depth', fraction_of_bottom_of_depth_to_drop)  # debug
+    #print('1st row idx scene', self.first_scene_row_idx)  # debug
+    #print('last row idx depth', self.last_depth_planner_row_idx)   # debug
     
     assert self.first_scene_row_idx < self.last_scene_row_idx
     assert self.first_depth_planner_row_idx < self.last_depth_planner_row_idx
 
 
     # note the shapes of inputs to the neural network; can retrieve in keras_drl_steering... .py
-    self.scene_input_shape = (self.last_scene_row_idx-self.first_scene_row_idx, SCENE_INPUT_SHAPE[1])
-    self.depth_planner_input_shape = (self.last_depth_planner_row_idx-self.first_depth_planner_row_idx, DEPTH_PLANNER_INPUT_SHAPE[1])
-    self.sensor_input_shape = SENSOR_INPUT_SHAPE
+    self.SCENE_INPUT_SHAPE = (self.last_scene_row_idx-self.first_scene_row_idx, self.SCENE_INPUT_SHAPE[1], 1)
+    self.DEPTH_PLANNER_INPUT_SHAPE = (self.last_depth_planner_row_idx-self.first_depth_planner_row_idx, self.DEPTH_PLANNER_INPUT_SHAPE[1], 1)
+    self.SENSOR_INPUT_SHAPE = self.SENSOR_INPUT_SHAPE
 
     
     # steering stuff
@@ -277,11 +278,7 @@ class AirSimEnv(Env):
     """
     self.client.simPause(True)
     self.client.armDisarm(True)
-    self.client.reset()
-    #reset_pose = self.reset_poses[random.randint(0, len(self.reset_poses)-1)]  # from when would drive aimlessly
 
-    self.client.simSetVehiclePose(pose=self.beginning_coords,
-                                           ignore_collison=True)
 
     self.episode_step_count = 0
     self.collisions_in_a_row = 0
@@ -290,10 +287,18 @@ class AirSimEnv(Env):
     self.episode_time_in_simulation_secs = 0.1  # avoid div by 0 err when call _make_state @ fin 
 
     self.client.simPause(False)
+    self.client.reset()
+    #reset_pose = self.reset_poses[random.randint(0, len(self.reset_poses)-1)]  # from when would drive aimlessly
+
+    self.client.simSetVehiclePose(pose=self.beginning_coords,
+                                           ignore_collison=True)
+    
     self.episode_time_in_irl_seconds = time.time()  # again, for debug purposes
     self.current_distance_from_destination = self.total_distance_to_destination
     self.episode_time_in_simulation_secs = 1.0
-  
+    
+    time.sleep(4)  # crash issue with requesting stuff before actually capable of resettting? idk
+    
     list_of_img_response_objects = self._request_sim_images()
     car_info = self.client.getCarState()
 
@@ -467,7 +472,7 @@ class AirSimEnv(Env):
     sensor_data =np.append(sensor_data, self.ending_coords.y_val)
 
     #print('sensor data shape', sensor_data.shape)  # for debug
-    return np.array(sensor_data)
+    return np.array(sensor_data).reshape(sensor_data.shape[0], 1)
 
  
   def _extract_scene_image(self, sim_img_response_list):
@@ -494,7 +499,7 @@ class AirSimEnv(Env):
     # for debugging and getting cameras correct
     #cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
     
-    return img
+    return img.reshape(img.shape[0], img.shape[1], 1)
       
 
   def _extract_depth_planner_image(self, sim_img_response_list):
@@ -532,7 +537,7 @@ class AirSimEnv(Env):
     #cv2.imwrite('depthPlanner_{}.jpg'.format(time.time()), img)
     #print('depth_planner img shape', img.shape)  # debug
 
-    return img
+    return img.reshape(img.shape[0], img.shape[1], 1)
 
 
   def _request_sim_images(self, scene=True, depth_planner=True):

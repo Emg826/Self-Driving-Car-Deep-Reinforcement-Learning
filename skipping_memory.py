@@ -35,6 +35,9 @@ class SkippingMemory():
     self.limit = limit
     self.num_observations = 0
 
+    # as per keras-rl/rl/memory.py
+    Experience = namedtuple('Experience', 'state0, action, reward, state1, terminal1')
+  
     assert skip_factor > 0, "Need skip factor > 0. Note: skip_factor=1 is same as SequentialMemory"
     self.skip_factor = skip_factor  # only stack every skip_factorth frame
     self.window_length = (self.num_states_to_stack * self.skip_factor) - 1
@@ -122,10 +125,9 @@ class SkippingMemory():
 
       # 3. if t-1 is terminal, then that means state_t is the 'next state' in the
       # terminal transition tuple ==> state_t is final state of an epsiode, not
-      # the first state of a new episode
-      while terminal_t_minus_1:
-        idx_t_plus_1 = sample_batch_indexes(self.window_length+1, num_entries, size=1)[0]
-        terminal_t_minus_1 = self.terminals[idx_t_plus_1 - 2]
+      # the first state of a new episode; SO just say forget it
+      if terminal_t_minus_1:
+        continue
 
       # at this point, know for sure that state_t is not the end of an episode.
       # so, state_t+1 is in the same episode as state_t
@@ -137,6 +139,9 @@ class SkippingMemory():
       if self.terminal_within_window(idx_t):
         continue  # don't bother if have a terminal in window; just start over
 
+      # AT THIS POINT, can say that there are no terminals from current state
+      # to last state going to stack 
+
       # 5. stack the states
       state_t = [] # stacking states, so need a list to store multiple states
       state_t_plus_1 = [] # also have to stack state_t+1 use stacked inputs to compute targets
@@ -147,14 +152,18 @@ class SkippingMemory():
         idx = (idx - self.skip_factor) % num_entries
 
       # 6. Build Experience tuple
+      if len(state_t) == 1:
+        state_t = state_t[0]
+      if len(state_t_plus_1) == 1:
+        state_t_plus_1 = state_t_plus_1[0]
       experiences.append(Experience(state0=state_t,
-                                    action=self.actions[idx_t],
-                                    reward=self.rewards[idx_t],
-                                    state1=state_t_plus_1,
-                                    terminal1=self.terminals[idx_t]))
+                                                action=self.actions[idx_t],
+                                                reward=self.rewards[idx_t],
+                                                state1=state_t_plus_1,
+                                                terminal1=self.terminals[idx_t]))
       
     assert len(experiences) == batch_size
-    
+
     return experiences
 
   def append(self, observation, action, reward, terminal, training=True):
@@ -166,9 +175,10 @@ class SkippingMemory():
     :param reward: reward for taking action in time step t
     :param terminal: True if time step t was last time step in episode; else False
     """
+    #print(self.recent_terminals)
     self.recent_states.append(observation)
     self.recent_terminals.append(terminal)
-    self.num_observations += 1
+    
 
     # check if training  because if testing, then don't need replay memory
     if training is True:
@@ -179,6 +189,8 @@ class SkippingMemory():
       self.actions[idx_to_insert_at] = action
       self.rewards[idx_to_insert_at] = reward
       self.terminals[idx_to_insert_at] = terminal
+      
+    self.num_observations += 1
 
   @property
   def nb_entries(self):
