@@ -166,7 +166,7 @@ dqn_agent = MDQNAgent(model=model, nb_actions=num_steering_angles,
 
 dqn_agent.compile(Adam(lr=0.0001), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_1208_00.h5'
+weights_filename = 'dqn_collision_avoidance_1209.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 
@@ -183,7 +183,7 @@ if want_to_train is True:
       print('Failed to load DQN weights')
 
   dqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
-                      visualize=False, verbose=2)
+                      visualize=False, verbose=False)
 
   dqn_agent.save_weights(weights_filename)
 else: # else want to test

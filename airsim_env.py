@@ -84,9 +84,9 @@ class AirSimEnv(Env):
     self.first_depth_planner_row_idx = int(DEPTH_PLANNER_INPUT_SHAPE[0] * fraction_of_top_of_depth_to_drop)
     self.last_depth_planner_row_idx = int(DEPTH_PLANNER_INPUT_SHAPE[0] * (1-fraction_of_bottom_of_depth_to_drop))
 
-    print('frac bottom depth', fraction_of_bottom_of_depth_to_drop)
-    print('1st row idx scene', self.first_scene_row_idx)
-    print('last row idx depth', self.last_depth_planner_row_idx)
+    print('frac bottom depth', fraction_of_bottom_of_depth_to_drop)  # debug
+    print('1st row idx scene', self.first_scene_row_idx)  # debug
+    print('last row idx depth', self.last_depth_planner_row_idx)   # debug
     
     assert self.first_scene_row_idx < self.last_scene_row_idx
     assert self.first_depth_planner_row_idx < self.last_depth_planner_row_idx
@@ -402,8 +402,7 @@ class AirSimEnv(Env):
     state_t2.append(self._extract_scene_image(list_of_img_response_objects))
     state_t2.append(self._extract_depth_planner_image(list_of_img_response_objects))
     state_t2.append(self._extract_sensor_data(car_info))
-    print('shape of state', np.array(state_t2).shape)  # for debug
-    print(np.array(state_t2))
+    #print('shape of state', np.array(state_t2).shape)  # for debug
     return state_t2  # order should be: scene img, depth img, sensor data
 
 
@@ -471,7 +470,7 @@ class AirSimEnv(Env):
     sensor_data =np.append(sensor_data, self.ending_coords.x_val)
     sensor_data =np.append(sensor_data, self.ending_coords.y_val)
 
-    print('sensor data shape', sensor_data.shape)  # for debug
+    #print('sensor data shape', sensor_data.shape)  # for debug
     return np.array(sensor_data)
 
  
@@ -494,7 +493,7 @@ class AirSimEnv(Env):
     # make grayscale since not need faster training more so than colors for now
     img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)  # not instant to do, but should help training
 
-    print('scene img shape', img.shape)  # debug
+    #print('scene img shape', img.shape)  # debug
 
     # for debugging and getting cameras correct
     #cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
@@ -535,7 +534,7 @@ class AirSimEnv(Env):
 
     # for debugging and getting cameras correct
     #cv2.imwrite('depthPlanner_{}.jpg'.format(time.time()), img)
-    print('depth_planner img shape', img.shape)  # debug
+    #print('depth_planner img shape', img.shape)  # debug
 
     return img
 
