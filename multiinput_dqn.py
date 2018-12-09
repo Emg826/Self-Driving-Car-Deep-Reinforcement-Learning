@@ -65,19 +65,15 @@ class AbstractMDQNAgent(Agent):
             batch.append(scene.reshape(1, scene.shape[0], scene.shape[1], 1))
             batch.append(depth.reshape(1, depth.shape[0], depth.shape[1], 1))
             batch.append(sensor.reshape(1, sensor.shape[0], 1))
-            print('BREAK')
+            #print('BREAK')  # debug
             break
         
         return batch
 
     def compute_batch_q_values(self, state_batch):
-        ct = 0
-        for i in state_batch:
-            ct += 1
-            print(ct)
         batch = self.process_state_batch(state_batch)
         q_values = self.model.predict_on_batch(batch)
-        print(q_values)
+        print('Q values: ', q_values)
         assert q_values.shape == (len(state_batch), self.nb_actions)
         return q_values
 

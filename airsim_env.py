@@ -40,10 +40,6 @@ import queue
 import time # just to check steps per second 
 
 
-SCENE_INPUT_SHAPE = (512, 1024)
-DEPTH_PLANNER_INPUT_SHAPE = (256, 512)
-SENSOR_INPUT_SHAPE = (17,)
-
 class AirSimEnv(Env):
   """Keras-rl usable gym (an openai package)"""
 
@@ -64,8 +60,8 @@ class AirSimEnv(Env):
     a do nothing function.
     """
             
-    SCENE_INPUT_SHAPE = (512, 1024)
-    DEPTH_PLANNER_INPUT_SHAPE = (256, 512)
+    SCENE_INPUT_SHAPE = (1137, 512)  # 1.0 / 0.245
+    DEPTH_PLANNER_INPUT_SHAPE = (1536, 384)  # 1.0 / 0.25 
     SENSOR_INPUT_SHAPE = (17,)
 
 
