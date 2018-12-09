@@ -74,8 +74,6 @@ def relative_bearing(car_yaw, car_position, destination_position):
     relative_bearing = -1.0 * relative_bearing
   # else do nothing since relative_bearing is already >= 0
 
-  print(car_heading_vector, car_to_dest_vector)
-
   return relative_bearing
 
 """

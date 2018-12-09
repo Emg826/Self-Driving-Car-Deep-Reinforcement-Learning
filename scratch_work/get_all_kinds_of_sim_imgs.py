@@ -54,7 +54,7 @@ cv2.imwrite('minus_top_third_and_minus_bottom_tenth.jpg', img[int(img.shape[0]*0
 
 sim_img_responses = client.simGetImages([airsim.ImageRequest(camera_name='0',
                                                                                       image_type=airsim.ImageType.Scene,
-                                                                                      pixels_as_float=True,
+                                                                                      pixels_as_float=False,
                                                                                       compress=False),
                                                           airsim.ImageRequest(camera_name='0',
                                                                                       image_type=airsim.ImageType.DepthPlanner,
@@ -66,7 +66,7 @@ sim_img_responses = client.simGetImages([airsim.ImageRequest(camera_name='0',
                                                                                       compress=False)])
 
 # raw imgs
-alter_pixel = lambda pixel:  min(4096.0 / (pixel+11.0), 255.0)
+alter_pixel = lambda pixel:  min(2048.0 / (pixel+6.0), 255.0)
 
 img_names = ['Scene', 'DepthPlanner', 'Segmentation']
 for img_response_obj, img_name in zip(sim_img_responses, img_names):
@@ -74,22 +74,14 @@ for img_response_obj, img_name in zip(sim_img_responses, img_names):
   width = img_response_obj.width
 
   img = None
-  if img_name == 'DepthPlanner' or img_name == 'Scene':
+  if img_name == 'DepthPlanner':
     img = airsim.list_to_2d_float_array(img_response_obj.image_data_float, width, height)
-    if img_name == 'Scene':
-      print(img.shape)
-      img = img * 255.0   # b4 this mult, all val in [0, 1]
-      
 
-    else:
-      # apply pxiel wise filter
-      for row_idx in range(0, img.shape[0]):
-        for col_idx in  range(0, img.shape[1]):
-          img[row_idx][col_idx] = alter_pixel(img[row_idx][col_idx])
+    for row_idx in range(0, img.shape[0]):
+      for col_idx in  range(0, img.shape[1]):
+        img[row_idx][col_idx] = alter_pixel(img[row_idx][col_idx])
 
-
-  if img_name == 'Segmentation':
-    #img = img * 255.0   # all vals 0 < .. < 1.0 otherwise
+  elif img_name == 'Segmentation' or img_name == 'Scene':
     img = np.fromstring(img_response_obj.image_data_uint8, dtype=np.uint8).reshape(height, width, 4)
     
   cv2.imwrite('{}.jpg'.format(img_name), img)

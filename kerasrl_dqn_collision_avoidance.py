@@ -14,19 +14,18 @@
   "CameraDefaults": {
     "CaptureSettings": [{
       "ImageType": 0,
-      "Width": 640,
-      "Height": 384,
+      "Width": 1024,
+      "Height": 512,
       "FOV_Degrees": 120
     },
     {
       "ImageType": 1,
-      "Width": 640,
-      "Height": 384,
+      "Width": 512,
+      "Height": 256,
       "FOV_Degrees": 120
     }]
   }           
 }
-
 """
 # 5.0 steps per IRL second in NoDisplay and 3.77 in SpringArmChase, trying to inrc clockspeed to 1.25 from 1.0
 # the idea is that @ 1.0 speed and SpringArmChase, want same number of steps per IRL second as \
@@ -39,10 +38,13 @@ import numpy as np
 import random
 import math
 
-from keras.models import Sequential
-from keras.layers import Dense, MaxPooling2D, Flatten, Conv2D, LocallyConnected2D, Activation
+#from keras.utils import plot_model
+from keras.models import Model
+from keras.layers import Input, Dense, Flatten, LocallyConnected2D
+from keras.layers.convolutional import Conv2D
+from keras.layers.pooling import MaxPooling2D
+from keras.layers.merge import concatenate
 from keras.optimizers import Adam
-from keras.regularizers import l2
 
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
@@ -55,64 +57,90 @@ from skipping_memory import SkippingMemory
 np.random.seed(7691)
 random.seed(6113)
 
-
 # This block solved the "CUBLAS_STATUS_ALLOC_FAILED" CUDA issue (https://stackoverflow.com/a/52762075)
 import keras.backend as K
 cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
 K.set_session(K.tf.Session(config=cfg))
 
 # have to be careful not to make PHI too complex, else decr num steps per IRL second
-PHI = lambda pixel:  min(4096.0 / (pixel+11.0), 255.0)
+PHI = lambda pixel:  min(2048.0 / (pixel+6.0), 255.0)
 
-
-env = AirSimEnv(num_steering_angles=3,
+env = AirSimEnv(num_steering_angles=5,
                       max_num_steps_in_episode=10**4,
-                      settings_json_image_w=512,  # from settings.json
-                      settings_json_image_h=256,
-                      fraction_of_top_of_img_to_cutoff=0.4,
-                      fraction_of_bottom_of_img_to_cutoff=0.45,
-                      seconds_pause_between_steps=0.00,  # so as to prevent extreme case of 1000 steps per second (if that was possible)
+                      fraction_of_top_of_scene_to_drop=0.4,
+                      fraction_of_bottom_of_scene_to_drop=0.1,
+                      fraction_of_top_of_depth_to_drop=0.4,
+                      fraction_of_bottom_of_depth_to_drop=0.35,
+                      seconds_pause_between_steps=0.03,  # gives rand num generator time to work (wasn't working b4)
                       seconds_between_collision_in_sim_and_register=1.5,  # note avg 4.12 steps per IRL sec on school computer
-                      lambda_function_to_apply_to_pixels=PHI)
+                      lambda_function_to_apply_to_depth_pixels=PHI)
 
 
 num_steering_angles = env.action_space.n
-INPUT_SHAPE = env.img_shape
+
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 3 
+SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.scene_input_shape
+DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.depth_planner_input_shape
+SENSOR_INPUT_SHAPE = env.sensor_input_shape
+
+print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 
 
-NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 4  # idea: it was taking too long for appearance
-# of obstacle to show up in stacked states? switchgin back to sequential memory
+# BEGIN MODEL
+#first input model - height, width, num_channels (gray, so only 1 channel)
+scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
+scene_conv_1 = Conv2D(32, kernel_size=(3, 3), activation='relu', strides=(2, 2), data_format='channels_first')(scene_nn_input)
+scene_pool_1 = MaxPooling2D(pool_size=(2, 2))(scene_conv_1)
+scene_local_1 =  LocallyConnected2D(16, kernel_size=(6, 6), activation='relu', strides=(4, 4))(scene_pool_1)
+scene_pool_2 = MaxPooling2D(pool_size=(2, 2))(scene_local_1)
+scene_flat = Flatten()(scene_pool_2)
 
-NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 4  # reward_delay * this = prev sec as input
-STACK_EVERY_N_FRAMES = 2
+# second input model - for depth images which are also grayscale
+depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
+depth_conv_1 = Conv2D(32, kernel_size=(3, 3), activation='relu', strides=(2, 2), data_format='channels_first')(depth_nn_input)
+depth_local_1 =  LocallyConnected2D(16, kernel_size=(6, 6), activation='relu', strides=(5, 5))(depth_conv_1)
+depth_pool_1 = MaxPooling2D(pool_size=(2, 2))(depth_local_1)
+depth_flat = Flatten()(depth_pool_1)
 
-input_shape = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + INPUT_SHAPE
+# third input model - for the numeric sensor data
+"""
+1-2. GPS (x, y) coordinates of car
+3. manhattan distance from end point (x, y)
+4. yaw/compass direction of car in radians  # use airsim.to_eularian_angles() to get yaw
+5. relative bearing in radians (see relative_bearing.py)
+6. current steering angle in [-1.0, 1.0]
+x. linear velocity (x, y) # no accurate whatsoever (press ';' in sim to see)
+7-8. angular velocity (x, y)
+9-10. linear acceleration (x, y)
+11-12. angular acceleration (x, y)
+13. speed
+14-15. absolute difference from current location to destination for x and y each
+16-17. (x, y) coordinates of destination
+"""
+sensor_input = Input(shape=SENSOR_INPUT_SHAPE)  # not much of a 'model', really...
+sensor_output =  Dense(32, activation='linear')(sensor_input)
 
+merge = concatenate([scene_flat, depth_flat, sensor_output])
 
-# input is 38, 512
-model = Sequential()
-model.add(LocallyConnected2D(64, kernel_size=(10, 10), strides=(8, 8),
-                 input_shape=input_shape, data_format = 'channels_first'))
-model.add(Activation('relu'))
+# interpretation/combination model
+merged_dense_1 = Dense(64, activation='relu')(merge)
+merged_dense_2 = Dense(64, activation='relu')(merged_dense_1)
+final_output = Dense(num_steering_angles, activation='sigmoid')(merged_dense_2)
 
-model.add(Conv2D(96, kernel_size=4, strides=3))
-model.add(Activation('relu'))
-
-model.add(Flatten())
-model.add(Dense(72, activity_regularizer=l2(0.001)))
-model.add(Activation('sigmoid'))
-
-model.add(Dense(128, activity_regularizer=l2(0.001)))
-model.add(Activation('sigmoid'))
-
-model.add(Dense(num_steering_angles))
+model = Model(inputs=[scene_nn_input, depth_nn_input, sensor_input], outputs=final_output)
+# summarize layers
 print(model.summary())
 
+# plot network graph  - - need graphviz installed
+#plot_model(model, to_file='multi_ddqn.png')
 
-replay_memory = SequentialMemory(limit=10**4, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
-#replay_memory = SkippingMemory(limit=10**4,
-#                                              num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
-#                                              skip_factor=STACK_EVERY_N_FRAMES)
+
+
+#replay_memory = SequentialMemory(limit=10**4, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
+STACK_EVERY_N_FRAMES = 2
+replay_memory = SkippingMemory(limit=10**4,
+                                              num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
+                                              skip_factor=STACK_EVERY_N_FRAMES)
 
 # something like: w/ probability epsilon (which decays through training),
 # select a random action; otherwise, consult the agent
@@ -122,7 +150,7 @@ num_total_training_steps = 150000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               attr='eps',
                               value_max=1.0, # start off 100% random
-                              value_min=0.05,  # get to random action x% of time
+                              value_min=0.10,  # get to random action x% of time
                               value_test=0.0,  # when testing, take rand action this val *100 % of time
                               nb_steps=int(math.sqrt(num_total_training_steps))) # of time steps to go from epsilon=value_max to =value_min
 
@@ -130,12 +158,12 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 dqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
-                                  policy=policy, gamma=0.9999, train_interval=4,  # gamma of 97 because a lot can change from now til end of car run
+                                  policy=policy, gamma=0.99, train_interval=4,  # gamma of 97 because a lot can change from now til end of car run
                                   nb_steps_warmup=2000)
 
 dqn_agent.compile(Adam(lr=0.0001), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_1207_03.h5'
+weights_filename = 'dqn_collision_avoidance_1208_00.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 
