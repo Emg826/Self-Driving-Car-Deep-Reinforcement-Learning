@@ -52,6 +52,7 @@ from rl.memory import SequentialMemory
 from rl.callbacks import ModelIntervalCheckpoint  # https://github.com/keras-rl/keras-rl/blob/171667dce2a39993705b12fdf0b3cc3bb7bf26d2/rl/callbacks.py
 
 from airsim_env import AirSimEnv
+from multiinput_dqn import MDQNAgent
 from skipping_memory import SkippingMemory
 
 np.random.seed(7691)
@@ -78,10 +79,12 @@ env = AirSimEnv(num_steering_angles=5,
 
 num_steering_angles = env.action_space.n
 
-NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 3 
-SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.scene_input_shape
-DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.depth_planner_input_shape
-SENSOR_INPUT_SHAPE = env.sensor_input_shape
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 1
+STACK_EVERY_N_FRAMES = 1
+
+SCENE_INPUT_SHAPE = env.scene_input_shape + (1,)
+DEPTH_INPUT_SHAPE = env.depth_planner_input_shape + (1,)
+SENSOR_INPUT_SHAPE =  env.sensor_input_shape + (1,)
 
 print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 
@@ -89,7 +92,7 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 # BEGIN MODEL
 #first input model - height, width, num_channels (gray, so only 1 channel)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
-scene_conv_1 = Conv2D(32, kernel_size=(3, 3), activation='relu', strides=(2, 2), data_format='channels_first')(scene_nn_input)
+scene_conv_1 = Conv2D(32, kernel_size=(3, 3), activation='relu', strides=(2, 2), data_format='channels_last')(scene_nn_input)
 scene_pool_1 = MaxPooling2D(pool_size=(2, 2))(scene_conv_1)
 scene_local_1 =  LocallyConnected2D(16, kernel_size=(6, 6), activation='relu', strides=(4, 4))(scene_pool_1)
 scene_pool_2 = MaxPooling2D(pool_size=(2, 2))(scene_local_1)
@@ -97,7 +100,7 @@ scene_flat = Flatten()(scene_pool_2)
 
 # second input model - for depth images which are also grayscale
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
-depth_conv_1 = Conv2D(32, kernel_size=(3, 3), activation='relu', strides=(2, 2), data_format='channels_first')(depth_nn_input)
+depth_conv_1 = Conv2D(32, kernel_size=(3, 3), activation='relu', strides=(2, 2), data_format='channels_last')(depth_nn_input)
 depth_local_1 =  LocallyConnected2D(16, kernel_size=(6, 6), activation='relu', strides=(5, 5))(depth_conv_1)
 depth_pool_1 = MaxPooling2D(pool_size=(2, 2))(depth_local_1)
 depth_flat = Flatten()(depth_pool_1)
@@ -118,7 +121,8 @@ x. linear velocity (x, y) # no accurate whatsoever (press ';' in sim to see)
 16-17. (x, y) coordinates of destination
 """
 sensor_input = Input(shape=SENSOR_INPUT_SHAPE)  # not much of a 'model', really...
-sensor_output =  Dense(32, activation='linear')(sensor_input)
+sensor_dense_1 =  Dense(32, activation='linear')(sensor_input)
+sensor_output = Flatten()(sensor_dense_1)
 
 merge = concatenate([scene_flat, depth_flat, sensor_output])
 
@@ -137,10 +141,9 @@ print(model.summary())
 
 
 #replay_memory = SequentialMemory(limit=10**4, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
-STACK_EVERY_N_FRAMES = 2
 replay_memory = SkippingMemory(limit=10**4,
-                                              num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
-                                              skip_factor=STACK_EVERY_N_FRAMES)
+                               num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
+                               skip_factor=STACK_EVERY_N_FRAMES)
 
 # something like: w/ probability epsilon (which decays through training),
 # select a random action; otherwise, consult the agent
@@ -155,7 +158,7 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               nb_steps=int(math.sqrt(num_total_training_steps))) # of time steps to go from epsilon=value_max to =value_min
 
 
-dqn_agent = DQNAgent(model=model, nb_actions=num_steering_angles,
+dqn_agent = MDQNAgent(model=model, nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=1e-1, # soft update parameter?
                                   policy=policy, gamma=0.99, train_interval=4,  # gamma of 97 because a lot can change from now til end of car run

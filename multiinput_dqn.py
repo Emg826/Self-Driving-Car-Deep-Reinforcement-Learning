@@ -21,7 +21,7 @@ class AbstractMDQNAgent(Agent):
     def __init__(self, nb_actions, memory, gamma=.99, batch_size=32, nb_steps_warmup=1000,
                  train_interval=1, memory_interval=1, target_model_update=10000,
                  delta_range=None, delta_clip=np.inf, custom_model_objects={}, **kwargs):
-        super(AbstractDQNAgent, self).__init__(**kwargs)
+        super(AbstractMDQNAgent, self).__init__(**kwargs)
 
         # Soft vs hard target model updates.
         if target_model_update < 0:
@@ -54,15 +54,30 @@ class AbstractMDQNAgent(Agent):
         # State.
         self.compiled = False
 
-    def process_state_batch(self, batch):
-        batch = batch
-        if self.processor is None:
-            return batch
-        return self.processor.process_state_batch(batch)
+    def process_state_batch(self, state_batch):
+        batch = []
+        for i in state_batch:
+            scene = i[0]
+            depth = i[1]
+            sensor = i[2]
+
+            # idx in batch is 1st, 
+            batch.append(scene.reshape(1, scene.shape[0], scene.shape[1], 1))
+            batch.append(depth.reshape(1, depth.shape[0], depth.shape[1], 1))
+            batch.append(sensor.reshape(1, sensor.shape[0], 1))
+            print('BREAK')
+            break
+        
+        return batch
 
     def compute_batch_q_values(self, state_batch):
+        ct = 0
+        for i in state_batch:
+            ct += 1
+            print(ct)
         batch = self.process_state_batch(state_batch)
         q_values = self.model.predict_on_batch(batch)
+        print(q_values)
         assert q_values.shape == (len(state_batch), self.nb_actions)
         return q_values
 
@@ -106,7 +121,7 @@ class MDQNAgent(AbstractMDQNAgent):
     """
     def __init__(self, model, policy=None, test_policy=None, enable_double_dqn=False, enable_dueling_network=False,
                  dueling_type='avg', *args, **kwargs):
-        super(DQNAgent, self).__init__(*args, **kwargs)
+        super(MDQNAgent, self).__init__(*args, **kwargs)
 
         # Validate (important) input.
         if hasattr(model.output, '__len__') and len(model.output) > 1:
@@ -157,7 +172,7 @@ class MDQNAgent(AbstractMDQNAgent):
         self.reset_states()
 
     def get_config(self):
-        config = super(DQNAgent, self).get_config()
+        config = super(MDQNAgent, self).get_config()
         config['enable_double_dqn'] = self.enable_double_dqn
         config['dueling_type'] = self.dueling_type
         config['enable_dueling_network'] = self.enable_dueling_network

@@ -63,6 +63,13 @@ class AirSimEnv(Env):
     parameter to this lambda function, call it pixel_value or something. Default is
     a do nothing function.
     """
+            
+    SCENE_INPUT_SHAPE = (512, 1024)
+    DEPTH_PLANNER_INPUT_SHAPE = (256, 512)
+    SENSOR_INPUT_SHAPE = (17,)
+
+
+    
     # sim admin stuff
     self.seconds_pause_between_steps = seconds_pause_between_steps
     self.seconds_between_collision_in_sim_and_register = seconds_between_collision_in_sim_and_register
@@ -77,7 +84,9 @@ class AirSimEnv(Env):
     self.first_depth_planner_row_idx = int(DEPTH_PLANNER_INPUT_SHAPE[0] * fraction_of_top_of_depth_to_drop)
     self.last_depth_planner_row_idx = int(DEPTH_PLANNER_INPUT_SHAPE[0] * (1-fraction_of_bottom_of_depth_to_drop))
 
-    
+    print('frac bottom depth', fraction_of_bottom_of_depth_to_drop)
+    print('1st row idx scene', self.first_scene_row_idx)
+    print('last row idx depth', self.last_depth_planner_row_idx)
     
     assert self.first_scene_row_idx < self.last_scene_row_idx
     assert self.first_depth_planner_row_idx < self.last_depth_planner_row_idx
@@ -225,7 +234,7 @@ class AirSimEnv(Env):
 
     reward_t = self._get_reward(collision_info, car_info)
 
-    statet2 = self._make_state(car_info, list_of_img_response_objects)
+    state_t2 = self._make_state(car_info, list_of_img_response_objects)
 
     # track collisions in a row for checking if stuck [e.g., on a curb]
     #print(collision_info.has_collided, collision_info.object_id)  # debug
@@ -261,7 +270,7 @@ class AirSimEnv(Env):
       done = True
       reward = 1.0
       
-    return state_t2, reward, done, {}
+    return state_t2, reward_t, done, {}
   
 
   def reset(self):
@@ -393,8 +402,9 @@ class AirSimEnv(Env):
     state_t2.append(self._extract_scene_image(list_of_img_response_objects))
     state_t2.append(self._extract_depth_planner_image(list_of_img_response_objects))
     state_t2.append(self._extract_sensor_data(car_info))
-    print(len(state_t2))
-    return [1, 2, 3]  # order should be: scene img, depth img, sensor data
+    print('shape of state', np.array(state_t2).shape)  # for debug
+    print(np.array(state_t2))
+    return state_t2  # order should be: scene img, depth img, sensor data
 
 
   
@@ -417,51 +427,52 @@ class AirSimEnv(Env):
 
     Note: no z coords because city is almost entirely flat
     """
-    sensor_data = []
+    sensor_data = np.empty(0)
     
     # 1-2 car's gps x and y coords
-    sensor_data.append(car_info.kinematics_estimated.position.x_val)
-    sensor_data.append(car_info.kinematics_estimated.position.y_val)
+    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.position.x_val)
+    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.position.y_val)
 
     # 3 manhattan distance til end
-    sensor_data.append(self.current_distance_from_destination)
+    sensor_data =np.append(sensor_data, self.current_distance_from_destination)
 
     # 4 yaw, which is relative to the world frame, so can translatie invariant?
     yaw = airsim.to_eularian_angles(car_info.kinematics_estimated.orientation)[2]  # (pitch, roll, yaw)
-    sensor_data.append(yaw)
+    sensor_data =np.append(sensor_data, yaw)
       
      # 5 relative bearing
-    sensor_data.append(self._relative_bearing(yaw,
+    sensor_data =np.append(sensor_data, self._relative_bearing(yaw,
                                                             (car_info.kinematics_estimated.position.x_val, car_info.kinematics_estimated.position.y_val),
                                                             (self.ending_coords.x_val, self.ending_coords.y_val)) )
 
     # 6 steering angle
-    sensor_data.append(self.car_controls.steering)
+    sensor_data =np.append(sensor_data, self.car_controls.steering)
 
     # 7 angular velocity x and y
-    sensor_data.append(car_info.kinematics_estimated.angular_velocity.x_val)
-    sensor_data.append(car_info.kinematics_estimated.angular_velocity.y_val)
+    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_velocity.x_val)
+    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_velocity.y_val)
 
     # 9 
-    sensor_data.append(car_info.kinematics_estimated.linear_acceleration.x_val)
-    sensor_data.append(car_info.kinematics_estimated.linear_acceleration.y_val)
+    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.linear_acceleration.x_val)
+    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.linear_acceleration.y_val)
 
     # 11
-    sensor_data.append(car_info.kinematics_estimated.angular_acceleration.x_val)
-    sensor_data.append(car_info.kinematics_estimated.angular_acceleration.y_val)
+    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_acceleration.x_val)
+    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_acceleration.y_val)
 
     # 13
-    sensor_data.append(car_info.speed)
+    sensor_data =np.append(sensor_data, car_info.speed)
 
     # 14
-    sensor_data.append(abs(self.ending_coords.x_val - car_info.kinematics_estimated.position.x_val))
-    sensor_data.append(abs(self.ending_coords.y_val - car_info.kinematics_estimated.position.y_val))
+    sensor_data =np.append(sensor_data, abs(self.ending_coords.x_val - car_info.kinematics_estimated.position.x_val))
+    sensor_data =np.append(sensor_data, abs(self.ending_coords.y_val - car_info.kinematics_estimated.position.y_val))
 
     # 16 & 17
-    sensor_data.append(self.ending_coords.x_val)
-    sensor_data.append(self.ending_coords.y_val)
+    sensor_data =np.append(sensor_data, self.ending_coords.x_val)
+    sensor_data =np.append(sensor_data, self.ending_coords.y_val)
 
-    return sensor_data
+    print('sensor data shape', sensor_data.shape)  # for debug
+    return np.array(sensor_data)
 
  
   def _extract_scene_image(self, sim_img_response_list):
@@ -475,13 +486,15 @@ class AirSimEnv(Env):
     img = np.fromstring(scene_img_response_obj.image_data_uint8, dtype=np.uint8).reshape(scene_img_response_obj.height,
                                                                                                                             scene_img_response_obj.width,
                                                                                                                             4)  # 4th channel is alpha
-    print(img.shape)  # debug
 
     # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
     img = img[self.first_scene_row_idx : self.last_scene_row_idx]
-
+    
+    
     # make grayscale since not need faster training more so than colors for now
     img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)  # not instant to do, but should help training
+
+    print('scene img shape', img.shape)  # debug
 
     # for debugging and getting cameras correct
     #cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
@@ -510,7 +523,6 @@ class AirSimEnv(Env):
                                                    depth_planner_img_response_obj.width, depth_planner_img_response_obj.height)
     # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
 
-    print(img.shape)  # debug
     img = img[self.first_depth_planner_row_idx : self.last_depth_planner_row_idx]
 
     # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
@@ -523,7 +535,8 @@ class AirSimEnv(Env):
 
     # for debugging and getting cameras correct
     #cv2.imwrite('depthPlanner_{}.jpg'.format(time.time()), img)
-    
+    print('depth_planner img shape', img.shape)  # debug
+
     return img
 
 
