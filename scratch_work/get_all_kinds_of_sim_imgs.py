@@ -65,8 +65,17 @@ sim_img_responses = client.simGetImages([airsim.ImageRequest(camera_name='0',
                                                                                       pixels_as_float=False,
                                                                                       compress=False)])
 
-# raw imgs
-alter_pixel = lambda pixel:  min(2048.0 / (pixel+6.0), 255.0)
+# apply to raw imgs
+alter_pixel = lambda pixel:  min(1024.0 / (pixel+3.0), 255.0)
+fraction_of_top_of_scene_to_drop=0.45
+fraction_of_bottom_of_scene_to_drop=0.1
+fraction_of_top_of_depth_to_drop=0.375
+fraction_of_bottom_of_depth_to_drop=0.375
+
+# only using middle 25% of depth image  - so make square by width / 0.25 ==> 4x width?
+# and only using middle 45% of scene image - so make squar by width / 045 ==> 2.2x width?
+# so, let's try: width of scene = 512, so then height = 1137
+#              ; : width of depth = 384, so then height = 384 / 0.25 = 1536
 
 img_names = ['Scene', 'DepthPlanner', 'Segmentation']
 for img_response_obj, img_name in zip(sim_img_responses, img_names):
@@ -77,12 +86,22 @@ for img_response_obj, img_name in zip(sim_img_responses, img_names):
   if img_name == 'DepthPlanner':
     img = airsim.list_to_2d_float_array(img_response_obj.image_data_float, width, height)
 
+    first_depth_planner_row_idx = int(height * fraction_of_top_of_depth_to_drop)
+    last_depth_planner_row_idx = int(height * (1-fraction_of_bottom_of_depth_to_drop))
+    img = img[ first_depth_planner_row_idx : last_depth_planner_row_idx]
+
     for row_idx in range(0, img.shape[0]):
       for col_idx in  range(0, img.shape[1]):
         img[row_idx][col_idx] = alter_pixel(img[row_idx][col_idx])
 
+
   elif img_name == 'Segmentation' or img_name == 'Scene':
     img = np.fromstring(img_response_obj.image_data_uint8, dtype=np.uint8).reshape(height, width, 4)
+    first_scene_row_idx = int(height * fraction_of_top_of_scene_to_drop)
+    last_scene_row_idx = int(height * (1-fraction_of_bottom_of_scene_to_drop))
+
+    img = img[first_scene_row_idx: last_scene_row_idx]
+
     
   cv2.imwrite('{}.jpg'.format(img_name), img)
 

@@ -60,9 +60,9 @@ class AirSimEnv(Env):
     parameter to this lambda function, call it pixel_value or something. Default is
     a do nothing function.
     """
-            
-    self.SCENE_INPUT_SHAPE = (1137, 512, 1)  # 1.0 / 0.245
-    self.DEPTH_PLANNER_INPUT_SHAPE = (1536, 384, 1)  # 1.0 / 0.25 
+    # 1st 2 must reflect settings.json
+    self.SCENE_INPUT_SHAPE = (640, 256, 1)  # 1.0 / 0.4
+    self.DEPTH_PLANNER_INPUT_SHAPE = (512, 128, 1)  # 1.0 / 0.25 
     self.SENSOR_INPUT_SHAPE = (17,1)
 
 
@@ -104,7 +104,9 @@ class AirSimEnv(Env):
                                                        manual_gear=1)  # should constrain speed to < 18ish mph
     # in-sim episode handling
     self.episode_step_count = 0
-    self.steps_per_episode = max_num_steps_in_episode 
+    self.steps_per_episode = max_num_steps_in_episode
+    self.total_num_episodes = 0  # over all eisodes
+    self.total_num_steps = 0   # over all episodes
 
     # collision info for emergency resets and reward func calc
     self.collisions_in_a_row = 0
@@ -160,9 +162,9 @@ class AirSimEnv(Env):
                                               airsim.Quaternionr(0.0, 0.0, -0.002,1.0))]
 
     #  instead of driving about aimlessly, will try to arrive to 1 destination from 1 starting point
-    self.beginning_coords = airsim.Pose(airsim.Vector3r(316.574,-2.870,-.7),  # safe
-                                                  airsim.Quaternionr(0.0,0.0,-0.967,0.253))
-    self.ending_coords = airsim.Vector3r(73.728,-51.480,-.7)  # appx 298 m from start; mostly straight
+    self.beginning_coords = airsim.Pose(airsim.Vector3r(-17.475, -28.334,-1.0),  # safe
+                                                  airsim.Quaternionr(0.0,0.0, 0.106, 0.994))
+    self.ending_coords = airsim.Vector3r(122.288, 12.283, -1.0)  # appx 298 m from start; mostly straight
 
 
     # units are meters
@@ -279,7 +281,10 @@ class AirSimEnv(Env):
     self.client.simPause(True)
     self.client.armDisarm(True)
 
+    self.total_num_episodes += 1
+    self.total_num_steps += self.episode_step_count
 
+    print('So far: {} steps over {} episodes'.format(self.total_num_steps, self.total_num_episodes))
     self.episode_step_count = 0
     self.collisions_in_a_row = 0
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
@@ -339,7 +344,7 @@ class AirSimEnv(Env):
     elif (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0) or \
          (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
       self.distance_since_last_collision = 0.0
-      reward = -0.1
+      reward = -0.05
      
     # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
     elif (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
@@ -380,9 +385,10 @@ class AirSimEnv(Env):
       time_reward = max(-1.0, min(0, sim_secs_remaining_to_get_to_destination / current_estimate_of_sim_secs_from_beginning_get_to_destination))    # 1 - proportion saying how far along the car is to arriving @ destination
 
       # will always be >= 0
-      distance_reward = max(0.0, self.current_distance_travelled_towards_destination**4 / self.total_distance_to_destination**4)
+      distance_reward = max(0.0, self.current_distance_travelled_towards_destination / self.total_distance_to_destination)
 
-      reward = time_reward + distance_reward
+      #reward = time_reward + distance_reward
+      reward = max(0, distance_reward - 0.05)  # don't reward until get sufficiently far out - should help avoid driving in circles
       
     # for debug
     print('reward', reward)
@@ -407,7 +413,6 @@ class AirSimEnv(Env):
     return state_t2  # order should be: scene img, depth img, sensor data
 
 
-  
   def _extract_sensor_data(self, car_info):
     """
     Returns a list w/ 17 entries: 
@@ -440,10 +445,11 @@ class AirSimEnv(Env):
     yaw = airsim.to_eularian_angles(car_info.kinematics_estimated.orientation)[2]  # (pitch, roll, yaw)
     sensor_data =np.append(sensor_data, yaw)
       
-     # 5 relative bearing
-    sensor_data =np.append(sensor_data, self._relative_bearing(yaw,
-                                                            (car_info.kinematics_estimated.position.x_val, car_info.kinematics_estimated.position.y_val),
-                                                            (self.ending_coords.x_val, self.ending_coords.y_val)) )
+    # 5 relative bearing
+    bearing = self._relative_bearing(yaw, (car_info.kinematics_estimated.position.x_val, car_info.kinematics_estimated.position.y_val),
+                                                            (self.ending_coords.x_val, self.ending_coords.y_val))
+    #print(bearing)  # debug
+    sensor_data =np.append(sensor_data,  bearing)
 
     # 6 steering angle
     sensor_data =np.append(sensor_data, self.car_controls.steering)
