@@ -14,19 +14,18 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
   "CameraDefaults": {
     "CaptureSettings": [{
       "ImageType": 0,
-      "Width": 512,
-      "Height": 1137,
-      "FOV_Degrees": 120
+      "Width": 256,
+      "Height": 640,
+      "FOV_Degrees": 90
     },
     {
       "ImageType": 1,
-      "Width": 384,
-      "Height": 1536,
-      "FOV_Degrees": 120
+      "Width": 128,
+      "Height": 512,
+      "FOV_Degrees": 90
     }]
   }           
 }
-
 
 """
 

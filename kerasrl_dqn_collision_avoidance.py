@@ -14,18 +14,19 @@
   "CameraDefaults": {
     "CaptureSettings": [{
       "ImageType": 0,
-      "Width": 512,
-      "Height": 1137,
-      "FOV_Degrees": 120
+      "Width": 256,
+      "Height": 640,
+      "FOV_Degrees": 90
     },
     {
       "ImageType": 1,
-      "Width": 384,
-      "Height": 1536,
-      "FOV_Degrees": 120
+      "Width": 128,
+      "Height": 512,
+      "FOV_Degrees": 90
     }]
   }           
 }
+
 
 """
 
@@ -35,7 +36,7 @@ import math
 
 #from keras.utils import plot_model
 from keras.models import Model
-from keras.layers import Input, Dense, Flatten, LocallyConnected2D
+from keras.layers import Input, Dense, Flatten, LocallyConnected2D, BatchNormalization, Activation
 from keras.layers.convolutional import Conv2D
 from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import concatenate
@@ -67,9 +68,9 @@ env = AirSimEnv(num_steering_angles=5,
                       fraction_of_bottom_of_scene_to_drop=0.1,
                       fraction_of_top_of_depth_to_drop=0.3,
                       fraction_of_bottom_of_depth_to_drop=0.45,
-                      seconds_pause_between_steps=0.01,  # assuming sim clock =1.0, 1/this is num steps per sim sec
+                      seconds_pause_between_steps=0.1,  # assuming sim clock =1.0, 1/this is num steps per sim sec
                       seconds_between_collision_in_sim_and_register=0.4,  # note avg 4.12 steps per IRL sec on school computer
-                      lambda_function_to_apply_to_depth_pixels=None)  # NN doesn't care if image looks  nice
+                      lambda_function_to_apply_to_depth_pixels=PHI)  # NN doesn't care if image looks  nice
                       # leaving ^ as None almost doubles num steps per IRL second, meaning
                       # can increase sim speed an get more done!
 
@@ -86,23 +87,44 @@ SENSOR_INPUT_SHAPE =  env.SENSOR_INPUT_SHAPE
 print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 
 
-# BEGIN MODEL -  inspired by AlexNet, espeically the first layer (tried to calc proportional hyperparams)
+# BEGIN MODEL - 
 #first input model - height, width, num_channels (gray, so only 1 channel)
-
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
-scene_conv_1 = Conv2D(64, kernel_size=(7,7), activation='relu', strides=(5, 5), data_format='channels_last')(scene_nn_input)
-scene_conv_2 = Conv2D(96, kernel_size=(5, 5), activation='relu', strides=(2, 2))(scene_conv_1)
-scene_conv_3 = Conv2D(96, kernel_size=(4, 4), activation='relu', strides=(2, 2))(scene_conv_2)
-scene_conv_4 = Conv2D(96, kernel_size=(3, 3), activation='relu', strides=(2, 2))(scene_conv_3)
-scene_flat = Flatten()(scene_conv_3)
+scene_conv_1 = Conv2D(64, kernel_size=(7,7), strides=(5, 5), data_format='channels_last')(scene_nn_input)
+scene_norm_1 = BatchNormalization()(scene_conv_1)# https://arxiv.org/pdf/1502.03167.pdf
+scene_1_activation = Activation('relu')(scene_norm_1)
+
+scene_conv_2 = Conv2D(64, kernel_size=(5,5), strides=(3, 3), data_format='channels_last')(scene_1_activation)
+scene_norm_2 = BatchNormalization()(scene_conv_2)# why in between?: https://arxiv.org/pdf/1502.03167.pdf
+scene_2_activation = Activation('relu')(scene_norm_2)
+
+scene_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(3, 3), data_format='channels_last')(scene_2_activation)
+scene_norm_3 = BatchNormalization()(scene_conv_3)# https://arxiv.org/pdf/1502.03167.pdf
+scene_3_activation = Activation('relu')(scene_norm_3)
+
+scene_conv_4 = Conv2D(64, kernel_size=(3,3), strides=(2, 2), data_format='channels_last')(scene_3_activation)
+scene_norm_4 = BatchNormalization()(scene_conv_4)# https://arxiv.org/pdf/1502.03167.pdf
+scene_4_activation = Activation('relu')(scene_norm_4)
+
+scene_flat = Flatten()(scene_conv_4)
 
 
 # not as deep as scene NN because depth not contain as much info per image
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
-depth_conv_1 = Conv2D(64, kernel_size=(5,5), activation='relu', strides=(3,3), data_format='channels_last')(depth_nn_input)
-depth_conv_2 = Conv2D(92, kernel_size=(4, 4), activation='relu', strides=(2, 2), data_format='channels_last')(depth_conv_1)
-depth_conv_3 = Conv2D(92, kernel_size=(3, 3), activation='relu', strides=(2, 2), data_format='channels_last')(depth_conv_2)
-depth_flat = Flatten()(depth_conv_3)
+
+depth_conv_1 = Conv2D(64, kernel_size=(5,5), strides=(3, 3), data_format='channels_last')(depth_nn_input)
+depth_norm_1 = BatchNormalization()(depth_conv_1)# https://arxiv.org/pdf/1502.03167.pdf
+depth_1_activation = Activation('relu')(depth_norm_1)
+
+depth_conv_2 = Conv2D(64, kernel_size=(4,4), strides=(2, 2), data_format='channels_last')(depth_1_activation)
+depth_norm_2 = BatchNormalization()(depth_conv_2)# https://arxiv.org/pdf/1502.03167.pdf
+depth_2_activation = Activation('relu')(depth_norm_2)
+
+depth_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(2, 2), data_format='channels_last')(depth_2_activation)
+depth_norm_3 = BatchNormalization()(depth_conv_3)# https://arxiv.org/pdf/1502.03167.pdf
+depth_3_activation = Activation('relu')(depth_norm_3)
+
+depth_flat = Flatten()(depth_3_activation)
 
 # third input model - for the numeric sensor data
 """
@@ -127,8 +149,8 @@ merge = concatenate([scene_flat, depth_flat, sensor_output])
 
 # interpretation/combination model
 #concatenate_1 (Concatenate)     (None, 5195)         0          
-merged_dense_1 = Dense(512, activation='relu')(merge)
-merged_dense_2 = Dense(692, activation='relu')(merged_dense_1)
+merged_dense_1 = Dense(384, activation='tanh')(merge)
+merged_dense_2 = Dense(512, activation='tanh')(merged_dense_1)
 final_output = Dense(num_steering_angles, activation='linear')(merged_dense_2)
 
 model = Model(inputs=[scene_nn_input, depth_nn_input, sensor_input], outputs=final_output)
@@ -161,12 +183,12 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 dqn_agent = MDQNAgent(model=model, nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=3000, # was soft update parameter?
-                                  policy=policy, gamma=0.95, train_interval=6,  # gamma of 97 because a lot can change from now til end of car run
-                                  nb_steps_warmup=128, batch_size=32)  # i'm going to view gamma like a confidence level in q val estimate
+                                  policy=policy, gamma=0.97, train_interval=6,  # gamma of 97 because a lot can change from now til end of car run
+                                  nb_steps_warmup=256, batch_size=32)  # i'm going to view gamma like a confidence level in q val estimate
 
-dqn_agent.compile(RMSprop(lr=0.0007), metrics=['mae']) # not use mse since |reward| <= 1.0
+dqn_agent.compile(RMSprop(lr= 0.00007), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_1210_9Mparams_01.h5'
+weights_filename = 'dqn_collision_avoidance_1211_03.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 

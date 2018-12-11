@@ -1,3 +1,13 @@
+"""
+This is mostly copy-pasted from the keras-rl github repository. The reason why
+this file even exists is that the provided keras-rl DQN agent could not
+handle my multi-input neural network. So, I had to make some changes. Also,
+after doing that, I realized that I wanted to be able to see what the neural network
+was seeing (recent_state) as well as see what its Q-values were. So, this
+class and its parent class can do that. Note: being able to see the Q-values and
+being able to see what the nn sees has been very helpful in 'debugging' the whole system. 
+"""
+
 from __future__ import division
 import warnings
 
@@ -8,6 +18,12 @@ from keras.layers import Lambda, Input, Layer, Dense
 from rl.core import Agent
 from rl.policy import EpsGreedyQPolicy, GreedyQPolicy
 from rl.util import *
+
+#import cv2  # only import this if you want to debug by saving sampled images
+# to see what the actual input the nn is
+import time
+
+
 
 def mean_q(y_true, y_pred):
     return K.mean(K.max(y_pred, axis=-1))
@@ -238,6 +254,10 @@ class MDQNAgent(AbstractMDQNAgent):
     def forward(self, observation):
         # Select an action.
         state = self.memory.get_recent_state(observation)
+
+        # debug - see what NN will see for the recent state and by proxy, what it
+        # would see during experience replay sampling/training
+        #cv2.imwrite('fwd_scene_recent_state_{}.jpg'.format(time.time()), state[0][0])
         q_values = self.compute_q_values(state)
         if self.training:
             action = self.policy.select_action(q_values=q_values)
