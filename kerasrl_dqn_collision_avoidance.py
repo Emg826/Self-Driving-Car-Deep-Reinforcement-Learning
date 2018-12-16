@@ -15,18 +15,17 @@
     "CaptureSettings": [{
       "ImageType": 0,
       "Width": 256,
-      "Height": 640,
-      "FOV_Degrees": 90
+      "Height": 256,
+      "FOV_Degrees": 45
     },
     {
       "ImageType": 1,
-      "Width": 128,
-      "Height": 512,
-      "FOV_Degrees": 90
+      "Width": 256,
+      "Height": 256,
+      "FOV_Degrees": 45
     }]
   }           
 }
-
 
 """
 
@@ -40,7 +39,7 @@ from keras.layers import Input, Dense, Flatten, LocallyConnected2D, BatchNormali
 from keras.layers.convolutional import Conv2D
 from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import concatenate
-from keras.optimizers import Adam, RMSprop
+from keras.optimizers import RMSprop
 
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
@@ -48,8 +47,8 @@ from rl.memory import SequentialMemory
 from rl.callbacks import ModelIntervalCheckpoint  # https://github.com/keras-rl/keras-rl/blob/171667dce2a39993705b12fdf0b3cc3bb7bf26d2/rl/callbacks.py
 
 from airsim_env import AirSimEnv
-from multiinput_dqn import MDQNAgent
 from skipping_memory import SkippingMemory
+from multi_input_processor import MultiInputProcessor
 
 np.random.seed(7691)
 random.seed(6113)
@@ -60,11 +59,11 @@ cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
 K.set_session(K.tf.Session(config=cfg))
 
 # have to be careful not to make PHI too complex, else decr num steps per IRL second
-PHI = lambda pixel:   min(1024.0 / (pixel+3.0), 255.0)
+PHI = lambda pixel: 255.0 if pixel < 3.90 else 450.0 / pixel
 
 env = AirSimEnv(num_steering_angles=5,
                       max_num_steps_in_episode=10**4,
-                      fraction_of_top_of_scene_to_drop=0.5,
+                      fraction_of_top_of_scene_to_drop=0.05,
                       fraction_of_bottom_of_scene_to_drop=0.1,
                       fraction_of_top_of_depth_to_drop=0.3,
                       fraction_of_bottom_of_depth_to_drop=0.45,
@@ -175,20 +174,24 @@ num_total_training_steps = 150000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               attr='eps',
                               value_max=1.0, # start off 100% random
-                              value_min=0.1,  # get to random action x% of time
+                              value_min=0.05,  # get to random action x% of time
                               value_test=0.05,  # MUST BE >0 else, for whatever reason, won't get random start
-                              nb_steps=25000) # of time steps to go from epsilon=value_max to =value_min
+                              nb_steps=50000) # of time steps to go from epsilon=value_max to =value_min
 
 
-dqn_agent = MDQNAgent(model=model, nb_actions=num_steering_angles,
+multi_input_processor = MultiInputProcessor(num_inputs=3) # 3 inputs: scene img, depth img, sensor data
+
+
+dqn_agent = DQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=3000, # was soft update parameter?
                                   policy=policy, gamma=0.97, train_interval=6,  # gamma of 97 because a lot can change from now til end of car run
-                                  nb_steps_warmup=256, batch_size=32)  # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=256, batch_size=32,   # i'm going to view gamma like a confidence level in q val estimate
+                                  processor=multi_input_processor)
 
-dqn_agent.compile(RMSprop(lr= 0.00007), metrics=['mae']) # not use mse since |reward| <= 1.0
+dqn_agent.compile(RMSprop(lr=0.00025), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_1211_03.h5'
+weights_filename = 'dqn_collision_avoidance_1216_01.h5'
 want_to_train = True
 train_from_weights_in_weights_filename = True
 

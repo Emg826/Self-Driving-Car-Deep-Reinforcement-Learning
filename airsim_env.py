@@ -15,14 +15,14 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
     "CaptureSettings": [{
       "ImageType": 0,
       "Width": 256,
-      "Height": 640,
-      "FOV_Degrees": 90
+      "Height": 256,
+      "FOV_Degrees": 45
     },
     {
       "ImageType": 1,
-      "Width": 128,
-      "Height": 512,
-      "FOV_Degrees": 90
+      "Width": 256,
+      "Height": 256,
+      "FOV_Degrees": 45
     }]
   }           
 }
@@ -60,8 +60,8 @@ class AirSimEnv(Env):
     a do nothing function.
     """
     # 1st 2 must reflect settings.json
-    self.SCENE_INPUT_SHAPE = (640, 256, 1)  # 1.0 / 0.4
-    self.DEPTH_PLANNER_INPUT_SHAPE = (512, 128, 1)  # 1.0 / 0.25 
+    self.SCENE_INPUT_SHAPE = (256, 256*3, 1)  # 1.0 / 0.4
+    self.DEPTH_PLANNER_INPUT_SHAPE = (256, 256*3, 1)  # 1.0 / 0.25 
     self.SENSOR_INPUT_SHAPE = (17,1)
 
 
@@ -71,7 +71,10 @@ class AirSimEnv(Env):
     self.seconds_between_collision_in_sim_and_register = seconds_between_collision_in_sim_and_register
     
     # image stuff
-    self.PHI = lambda_function_to_apply_to_depth_pixels  # PHI from DQN algorithm
+    if lambda_function_to_apply_to_depth_pixels is None:  # PHI from DQN algorithm
+      self.PHI = None  # PHI from DQN algorithm
+    else:
+      self.PHI =  np.vectorize(lambda_function_to_apply_to_depth_pixels)  # 10x faster than for-looping through pixels
 
 
     self.first_scene_row_idx = int(self.SCENE_INPUT_SHAPE[0] * fraction_of_top_of_scene_to_drop)
@@ -126,16 +129,31 @@ class AirSimEnv(Env):
 
     self._setup_my_cameras()
 
-    self.scene_request_obj = airsim.ImageRequest(camera_name='0',
-                                                                   image_type=airsim.ImageType.Scene,
-                                                                   pixels_as_float=False,
-                                                                   compress=False)
-    
-    self.depth_planner_request_obj = airsim.ImageRequest(camera_name='0',
-                                                                             image_type=airsim.ImageType.DepthPlanner,
-                                                                             pixels_as_float=True,
-                                                                             compress=False)
-    self.list_of_img_request_objects = [self.scene_request_obj, self.depth_planner_request_obj]
+    # requests also returned in this order; order by how concatentate img, from L to R
+    self.list_of_img_request_objects = [airsim.ImageRequest(camera_name=self.left_cam_name,
+                                                            image_type=airsim.ImageType.Scene,
+                                                            pixels_as_float=False,
+                                                            compress=False),
+                                        airsim.ImageRequest(camera_name=self.forward_cam_name,
+                                                            image_type=airsim.ImageType.Scene,
+                                                            pixels_as_float=False,
+                                                            compress=False),
+                                        airsim.ImageRequest(camera_name=self.right_cam_name,
+                                                            image_type=airsim.ImageType.Scene,
+                                                            pixels_as_float=False,
+                                                            compress=False),
+                                        airsim.ImageRequest(camera_name=self.left_cam_name,
+                                                            image_type=airsim.ImageType.DepthPlanner,
+                                                            pixels_as_float=True,
+                                                            compress=False),
+                                        airsim.ImageRequest(camera_name=self.forward_cam_name,
+                                                            image_type=airsim.ImageType.DepthPlanner,
+                                                            pixels_as_float=True,
+                                                            compress=False),
+                                        airsim.ImageRequest(camera_name=self.right_cam_name,
+                                                            image_type=airsim.ImageType.DepthPlanner,
+                                                            pixels_as_float=True,
+                                                            compress=False) ]
 
 
     # ; ordering: 1 2 3 4 while Quaternionr() has 2 3 4 1 for some reason
@@ -481,17 +499,19 @@ class AirSimEnv(Env):
 
  
   def _extract_scene_image(self, sim_img_response_list):
-    scene_img_response_obj = None
+    scene_img_responses = []
     for idx in range(0, len(sim_img_response_list)):
-      if sim_img_response_list[idx].image_type == airsim.ImageType.Scene: 
-        scene_img_response_obj = sim_img_response_list[idx]
-        break
+      if sim_img_response_list[idx].image_type == airsim.ImageType.Scene:
+        
+        scene_img_responses.append(sim_img_response_list[idx])
       
-   # originally, the image is a 1D python list; want to turn it into a 2D numpy array
-    img = np.fromstring(scene_img_response_obj.image_data_uint8, dtype=np.uint8).reshape(scene_img_response_obj.height,
-                                                                                                                            scene_img_response_obj.width,
-                                                                                                                            4)  # 4th channel is alpha
-
+    # originally, the image is in 3 1D python lists; want to turn them into a 2D numpy arrays
+    img = np.concatenate([np.fromstring(img_response_obj.image_data_uint8,
+                                        dtype=np.uint8).reshape(img_response_obj.height,
+                                                                img_response_obj.width,
+                                                                4) for img_response_obj in scene_img_responses],
+                         axis=1)
+    
     # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
     img = img[self.first_scene_row_idx : self.last_scene_row_idx]
     
@@ -516,27 +536,28 @@ class AirSimEnv(Env):
     
     :returns: 2D numpy array of float32; preprocessed depth planner image
     """
-    
-    depth_planner_img_response_obj = None
+    depth_planner_img_responses = []
     for idx in range(0, len(sim_img_response_list)):
       if sim_img_response_list[idx].image_type == airsim.ImageType.DepthPlanner: 
-        depth_planner_img_response_obj = sim_img_response_list[idx]
-        break
+        
+        depth_planner_img_responses.append(sim_img_response_list[idx])
       
-   # originally, the image is a 1D python list; want to turn it into a 2D numpy array
-    img = airsim.list_to_2d_float_array(depth_planner_img_response_obj.image_data_float,
-                                                   depth_planner_img_response_obj.width, depth_planner_img_response_obj.height)
-    # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
+    # originally, the image is in 3 1D python lists of strings; want to turn them into a 2D numpy arrays
+    img = np.concatenate([airsim.list_to_2d_float_array(depth_planner_img_response_obj.image_data_float,
+                                                        depth_planner_img_response_obj.width,
+                                                        depth_planner_img_response_obj.height) \
+                          for depth_planner_img_response_obj in depth_planner_img_responses],
+                          axis=1)
 
+    # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
     img = img[self.first_depth_planner_row_idx : self.last_depth_planner_row_idx]
 
     # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
 
     # note: could leave as 1d array cutoff frac_top_to_drop*height first many cols and then do multiprocessing?
     if self.PHI is not None:   # could leave a None and just skip this part (might be good idea since NN not care if look nice?)
-      for row_idx in range(0, img.shape[0]):
-        for col_idx in  range(0, img.shape[1]):
-          img[row_idx][col_idx] = self.PHI(img[row_idx][col_idx])
+      img = self.PHI(img) # PHI was vectorized in __init__, so this applies PHI to each pixel in
+      # image approximately 10x faster than 2-nested for-loops of applying PHI 
 
     # for debugging and getting cameras correct
     #cv2.imwrite('depthPlanner_{}.jpg'.format(time.time()), img)
@@ -571,15 +592,16 @@ class AirSimEnv(Env):
 
     :returns: nada
     """
+    left_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=-0.775, roll=0.0)
+    forward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
+    right_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.775, roll=0.0)
+    backward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
+
+    
     # creates a panoram-ish camera set-up
-    self.client.simSetCameraOrientation(self.left_cam_name,
-                                        airsim.Vector3r(0.0, 0.0, -0.68))
-    self.client.simSetCameraOrientation(self.right_cam_name,
-                                   airsim.Vector3r(0.0, 0.0, 0.68))
-    self.client.simSetCameraOrientation(self.forward_cam_name,
-                                        airsim.Vector3r(0.0, 0.0, 0.0))
-    self.client.simSetCameraOrientation(self.backward_cam_name,
-                                        airsim.Vector3r(0.0, 0.0, 11.5))
+    self.client.simSetCameraOrientation(self.left_cam_name, left_cam_orientation)
+    self.client.simSetCameraOrientation(self.right_cam_name, right_cam_orientation)
+    self.client.simSetCameraOrientation(self.forward_cam_name, forward_cam_orientation)
 
 
   def _manhattan_distance(self, x0, x1, y0, y1):
@@ -684,55 +706,3 @@ class AirSimEnv(Env):
     return relative_bearing
 
     
-  def _make_composite_image_from_responses(self, sim_img_responses):
-    """
-                  ---   NO LONGER IN USE   ---
-    
-    Take the list of ImageResponse objects (the observation), 2D numpy array,
-    and then concatenate all of the images into a composite (panoramic-ish) image.
-
-    Note: expects 3 img response obj, a left, front, and right img response objs,
-    in that order.
-
-    :param sim_img_responses: list of ImageResponse obj from a call to
-    request_all_4_sim_images() in the AirSimEnv class; Note: should be type DepthPlanner
-    
-    :returns: 2D channel numpy array of all images "stitched" together and after
-    applying self.PHI (pixel by pixel preprocessing function) 
-    """
-    # 4 channel images; append that image to a list
-
-    height = sim_img_responses[0].height
-    width = sim_img_responses[0].width
-
-    # originally, the image is a 1D python list; want to turn it into a 2D numpy array
-    reshaped_imgs = []
-    for img_response_obj in sim_img_responses:
-      reshaped_imgs.append(airsim.list_to_2d_float_array(img_response_obj.image_data_float,
-                                                                            img_response_obj.width,
-                                                                            img_response_obj.height))
-
-    # stitch left, front, and right camera images together
-    composite_img = np.concatenate([reshaped_imgs[0][int(3*height/7)::,int((2*width/5))::],
-                                                  reshaped_imgs[1][int(3*height/7)::,:],
-                                                  reshaped_imgs[2][int(3*height/7)::,0:int((3*width/5))]], axis=1)
-
-    # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
-    if len(composite_img.shape) ==  2:
-      for row_idx in range(0, composite_img.shape[0]):
-        for col_idx in  range(0, composite_img.shape[1]):
-          composite_img[row_idx][col_idx] = self.PHI(composite_img[row_idx][col_idx])
-
-    # else, maybe there's an RGB value in each pixel location?
-    elif len(composite_img.shape) == 3:
-      for row_idx in range(0, composite_img.shape[0]):
-        for col_idx in  range(0, composite_img.shape[1]):
-          for _ in range(0, composite_img.shape[2]):
-            composite_img[row_idx][col_idx][_] = self.PHI(composite_img[row_idx][col_idx][_])
-    else:
-      print('Warning! image could not be preprocessed')
-
-    # for debugging and getting cameras correct
-    #cv2.imwrite('{}.jpg'.format(time.time()), composite_img)
-    
-    return composite_img
