@@ -24,7 +24,7 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
       "Height": 256,
       "FOV_Degrees": 45
     }]
-  }           
+  }
 }
 
 """
@@ -37,7 +37,7 @@ import os
 import cv2
 import math
 import queue
-import time # just to check steps per second 
+import time # just to check steps per second
 
 
 class AirSimEnv(Env):
@@ -61,15 +61,15 @@ class AirSimEnv(Env):
     """
     # 1st 2 must reflect settings.json
     self.SCENE_INPUT_SHAPE = (256, 256*3, 1)  # 1.0 / 0.4
-    self.DEPTH_PLANNER_INPUT_SHAPE = (256, 256*3, 1)  # 1.0 / 0.25 
+    self.DEPTH_PLANNER_INPUT_SHAPE = (256, 256*3, 1)  # 1.0 / 0.25
     self.SENSOR_INPUT_SHAPE = (17,1)
 
 
-    
+
     # sim admin stuff
     self.seconds_pause_between_steps = seconds_pause_between_steps
     self.seconds_between_collision_in_sim_and_register = seconds_between_collision_in_sim_and_register
-    
+
     # image stuff
     if lambda_function_to_apply_to_depth_pixels is None:  # PHI from DQN algorithm
       self.PHI = None  # PHI from DQN algorithm
@@ -86,7 +86,7 @@ class AirSimEnv(Env):
     #print('frac bottom depth', fraction_of_bottom_of_depth_to_drop)  # debug
     #print('1st row idx scene', self.first_scene_row_idx)  # debug
     #print('last row idx depth', self.last_depth_planner_row_idx)   # debug
-    
+
     assert self.first_scene_row_idx < self.last_scene_row_idx
     assert self.first_depth_planner_row_idx < self.last_depth_planner_row_idx
 
@@ -96,7 +96,7 @@ class AirSimEnv(Env):
     self.DEPTH_PLANNER_INPUT_SHAPE = (self.last_depth_planner_row_idx-self.first_depth_planner_row_idx, self.DEPTH_PLANNER_INPUT_SHAPE[1], 1)
     self.SENSOR_INPUT_SHAPE = self.SENSOR_INPUT_SHAPE
 
-    
+
     # steering stuff
     self.action_space = spaces.Discrete(num_steering_angles)
     self.action_space_steering = np.linspace(-1.0, 1.0, num_steering_angles).tolist()
@@ -113,21 +113,23 @@ class AirSimEnv(Env):
     # collision info for emergency resets and reward func calc
     self.collisions_in_a_row = 0
     self.max_acceptable_collisions_in_a_row = 3 # note: if stuck, then collisions will keep piling on
-    # also collisions being stuck can cause glitch through map 
-    
+    # also collisions being stuck can cause glitch through map
+
     self.obj_id_of_last_collision = -123456789  # anything <-1 is unassociated w/ an obj in sim (afaik)
 
     # connect to the client; we're ready to connect to set up our cameras
     self.client = airsim.CarClient()
     self.client.confirmConnection()
     self.client.enableApiControl(True)
-    
+
     self.left_cam_name = '2'
     self.right_cam_name = '1'
     self.forward_cam_name = '0'
     self.backward_cam_name = '4'
 
     self._setup_my_cameras()
+
+    self.depth_planner_dilation_kernel = np.ones((3,5),np.uint8) * 255
 
     # requests also returned in this order; order by how concatentate img, from L to R
     self.list_of_img_request_objects = [airsim.ImageRequest(camera_name=self.left_cam_name,
@@ -280,14 +282,14 @@ class AirSimEnv(Env):
     if self.episode_step_count % 30 == 0:
       print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
                                                                                   (self.episode_step_count / (time.time() -self.episode_time_in_irl_seconds))))
-      
+
     # check if made it to w/in the radius of the destination area/circle
     if self._arrived_at_destination(car_info):
       done = True
       reward = 1.0
-      
+
     return state_t2, reward_t, done, {}
-  
+
 
   def reset(self):
     """
@@ -306,7 +308,7 @@ class AirSimEnv(Env):
     self.collisions_in_a_row = 0
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
 
-    self.episode_time_in_simulation_secs = 0.1  # avoid div by 0 err when call _make_state @ fin 
+    self.episode_time_in_simulation_secs = 0.1  # avoid div by 0 err when call _make_state @ fin
 
     self.client.simPause(False)
     self.client.reset()
@@ -314,18 +316,18 @@ class AirSimEnv(Env):
 
     self.client.simSetVehiclePose(pose=self.beginning_coords,
                                            ignore_collison=True)
-    
+
     self.episode_time_in_irl_seconds = time.time()  # again, for debug purposes
     self.current_distance_from_destination = self.total_distance_to_destination
     self.episode_time_in_simulation_secs = 1.0
-    
+
     time.sleep(4)  # crash issue with requesting stuff before actually capable of resettting? idk
-    
+
     list_of_img_response_objects = self._request_sim_images()
     car_info = self.client.getCarState()
 
     # initial state for this new episode
-    return self._make_state(car_info, list_of_img_response_objects)  
+    return self._make_state(car_info, list_of_img_response_objects)
 
 
   def render(self, mode='human'):
@@ -352,7 +354,7 @@ class AirSimEnv(Env):
 
     # id -1 if unnamed obj; not imply not colliding, just unnamed
     # if collided with something with a name
-    sec_since_last_collision = time.time() -  collision_info.time_stamp*10**(-9) 
+    sec_since_last_collision = time.time() -  collision_info.time_stamp*10**(-9)
     if sec_since_last_collision < self.seconds_between_collision_in_sim_and_register and collision_info.time_stamp != 0.0:  # irl seconds
       self.distance_since_last_collision = 0.0
       reward = -1.0
@@ -362,7 +364,7 @@ class AirSimEnv(Env):
          (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
       self.distance_since_last_collision = 0.0
       reward = -0.05
-     
+
     # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
     elif (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
       reward = -1.0
@@ -395,7 +397,7 @@ class AirSimEnv(Env):
       # time = distance / rate --- time to get from origin to end, at the average pace of the vehicle
       current_estimate_of_sim_secs_from_beginning_get_to_destination = self.total_distance_to_destination / current_average_meters_per_sim_secs
 
-      # will go negative 
+      # will go negative
       sim_secs_remaining_to_get_to_destination = current_estimate_of_sim_secs_from_beginning_get_to_destination - self.episode_time_in_simulation_secs
 
       # will always be <= 0
@@ -406,7 +408,7 @@ class AirSimEnv(Env):
 
       #reward = time_reward + distance_reward
       reward = max(0, distance_reward - 0.05)  # don't reward until get sufficiently far out - should help avoid driving in circles
-      
+
     # for debug
     print('reward', reward)
     return reward
@@ -432,7 +434,7 @@ class AirSimEnv(Env):
 
   def _extract_sensor_data(self, car_info):
     """
-    Returns a list w/ 17 entries: 
+    Returns a list w/ 17 entries:
 
     1-2. GPS (x, y) coordinates of car
     3. manhattan distance from end point (x, y)
@@ -450,7 +452,7 @@ class AirSimEnv(Env):
     Note: no z coords because city is almost entirely flat
     """
     sensor_data = np.empty(0)
-    
+
     # 1-2 car's gps x and y coords
     sensor_data =np.append(sensor_data, car_info.kinematics_estimated.position.x_val)
     sensor_data =np.append(sensor_data, car_info.kinematics_estimated.position.y_val)
@@ -461,7 +463,7 @@ class AirSimEnv(Env):
     # 4 yaw, which is relative to the world frame, so can translatie invariant?
     yaw = airsim.to_eularian_angles(car_info.kinematics_estimated.orientation)[2]  # (pitch, roll, yaw)
     sensor_data =np.append(sensor_data, yaw)
-      
+
     # 5 relative bearing
     bearing = self._relative_bearing(yaw, (car_info.kinematics_estimated.position.x_val, car_info.kinematics_estimated.position.y_val),
                                                             (self.ending_coords.x_val, self.ending_coords.y_val))
@@ -475,7 +477,7 @@ class AirSimEnv(Env):
     sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_velocity.x_val)
     sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_velocity.y_val)
 
-    # 9 
+    # 9
     sensor_data =np.append(sensor_data, car_info.kinematics_estimated.linear_acceleration.x_val)
     sensor_data =np.append(sensor_data, car_info.kinematics_estimated.linear_acceleration.y_val)
 
@@ -497,25 +499,25 @@ class AirSimEnv(Env):
     #print('sensor data shape', sensor_data.shape)  # for debug
     return np.array(sensor_data).reshape(sensor_data.shape[0], 1)
 
- 
+
   def _extract_scene_image(self, sim_img_response_list):
     scene_img_responses = []
     for idx in range(0, len(sim_img_response_list)):
       if sim_img_response_list[idx].image_type == airsim.ImageType.Scene:
-        
+
         scene_img_responses.append(sim_img_response_list[idx])
-      
+
     # originally, the image is in 3 1D python lists; want to turn them into a 2D numpy arrays
     img = np.concatenate([np.fromstring(img_response_obj.image_data_uint8,
                                         dtype=np.uint8).reshape(img_response_obj.height,
                                                                 img_response_obj.width,
                                                                 4) for img_response_obj in scene_img_responses],
                          axis=1)
-    
+
     # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
     img = img[self.first_scene_row_idx : self.last_scene_row_idx]
-    
-    
+
+
     # make grayscale since not need faster training more so than colors for now
     img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)  # not instant to do, but should help training
 
@@ -523,25 +525,25 @@ class AirSimEnv(Env):
 
     # for debugging and getting cameras correct
     #cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
-    
+
     return img.reshape(img.shape[0], img.shape[1], 1)
-      
+
 
   def _extract_depth_planner_image(self, sim_img_response_list):
     """
     Extract depth planner img from response obj in ^ and apply self.PHI to a depth planner image.
-    
+
     :param sim...: list of image responses w/ 1 ImageResponse object for depth_planner
     that has its data that can be reshaped into a 2D (i.e., 1 channel) array / an image
-    
+
     :returns: 2D numpy array of float32; preprocessed depth planner image
     """
     depth_planner_img_responses = []
     for idx in range(0, len(sim_img_response_list)):
-      if sim_img_response_list[idx].image_type == airsim.ImageType.DepthPlanner: 
-        
+      if sim_img_response_list[idx].image_type == airsim.ImageType.DepthPlanner:
+
         depth_planner_img_responses.append(sim_img_response_list[idx])
-      
+
     # originally, the image is in 3 1D python lists of strings; want to turn them into a 2D numpy arrays
     img = np.concatenate([airsim.list_to_2d_float_array(depth_planner_img_response_obj.image_data_float,
                                                         depth_planner_img_response_obj.width,
@@ -557,7 +559,18 @@ class AirSimEnv(Env):
     # note: could leave as 1d array cutoff frac_top_to_drop*height first many cols and then do multiprocessing?
     if self.PHI is not None:   # could leave a None and just skip this part (might be good idea since NN not care if look nice?)
       img = self.PHI(img) # PHI was vectorized in __init__, so this applies PHI to each pixel in
-      # image approximately 10x faster than 2-nested for-loops of applying PHI 
+      # image approximately 10x faster than 2-nested for-loops of applying PHI
+
+    # canny edge detection - draws white-ish outlines on objects w/ distinct edges
+    # surprisingly fast - averages about 0.000579 seconds
+    img = np.array(img, np.uint8)
+    canny_edges = cv2.Canny(img, 15, 400)  # np.array, min, max intensity gradient
+
+    # dilate - stretch out the areas w/ white pixels (edges in canny_edges)
+    dilated_canny_edges = cv2.dilate(canny_edges, self.depth_planner_dilation_kernel, iterations = 1)
+
+    # overlay the dilated edges on the depth planner image (draw object outlines)
+    img = cv2.addWeighted(img, 0.75, dilated_canny_edges, 0.25, 30.0)
 
     # for debugging and getting cameras correct
     #cv2.imwrite('depthPlanner_{}.jpg'.format(time.time()), img)
@@ -579,7 +592,7 @@ class AirSimEnv(Env):
     """
     if scene == True and depth_planner == True:
       return self.client.simGetImages(self.list_of_img_request_objects)
-    
+
     else:
       print('ERROR: must request both scene and depth planner; no support for otherwise')
       return None
@@ -597,7 +610,7 @@ class AirSimEnv(Env):
     right_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.775, roll=0.0)
     backward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
 
-    
+
     # creates a panoram-ish camera set-up
     self.client.simSetCameraOrientation(self.left_cam_name, left_cam_orientation)
     self.client.simSetCameraOrientation(self.right_cam_name, right_cam_orientation)
@@ -624,7 +637,7 @@ class AirSimEnv(Env):
                                                                             self.ending_coords.x_val,
                                                                             car_info.kinematics_estimated.position.y_val,
                                                                             self.ending_coords.y_val)
-                                                         
+
     if current_distance_from_destination < self.ending_circle_radius:
       return True
     else:
@@ -649,9 +662,9 @@ class AirSimEnv(Env):
     :param _position: (x, y, z) airsim.Vector
     """
     car_to_dest_vector = (destination_position[0] - car_position[0], destination_position[1] - car_position[1])
-  
+
     # calculate vector from angle and magnitude
-  
+
     # if car yaw is negative in [-pi, 0]; convert to a positive angle [pi, 2pi]
     if car_yaw < 0:
       car_yaw = 2.0 * math.pi + car_yaw
@@ -670,7 +683,7 @@ class AirSimEnv(Env):
     # let u = car_heading_vector and let v = car_to_dest_vector
     u_dot_v = (car_heading_vector[0] * car_to_dest_vector[0]) + \
                   (car_heading_vector[1] * car_to_dest_vector[1])
-  
+
     # only need below if have non1 |v|
     #magnitude_of_u = math.sqrt(car_heading_vector[0]**2 + car_heading_vector[1]**2)  # since |v| = 1.0
     magnitude_of_u = 1.0
@@ -704,5 +717,3 @@ class AirSimEnv(Env):
     # else do nothing since relative_bearing is already >= 0
 
     return relative_bearing
-
-    
