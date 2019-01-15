@@ -89,7 +89,7 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 # BEGIN MODEL - 
 #first input model - height, width, num_channels (gray, so only 1 channel)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
-scene_conv_1 = Conv2D(64, kernel_size=(7,7), strides=(5, 5), data_format='channels_last')(scene_nn_input)
+scene_conv_1 = Conv2D(32, kernel_size=(7,7), strides=(5, 5), data_format='channels_last')(scene_nn_input)
 scene_norm_1 = BatchNormalization()(scene_conv_1)# https://arxiv.org/pdf/1502.03167.pdf
 scene_1_activation = Activation('relu')(scene_norm_1)
 
@@ -111,7 +111,7 @@ scene_flat = Flatten()(scene_conv_4)
 # not as deep as scene NN because depth not contain as much info per image
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
 
-depth_conv_1 = Conv2D(64, kernel_size=(5,5), strides=(3, 3), data_format='channels_last')(depth_nn_input)
+depth_conv_1 = Conv2D(32, kernel_size=(5,5), strides=(3, 3), data_format='channels_last')(depth_nn_input)
 depth_norm_1 = BatchNormalization()(depth_conv_1)# https://arxiv.org/pdf/1502.03167.pdf
 depth_1_activation = Activation('relu')(depth_norm_1)
 
@@ -181,26 +181,31 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 
 multi_input_processor = MultiInputProcessor(num_inputs=3) # 3 inputs: scene img, depth img, sensor data
 
+# compute gamma -  a lot can change from now til end of car run -
+future_time_steps_until_discount_rate_is_one_half = 25.0  # assuming ~ 4 time steps per simulation second
+# solve gamma ^ n = 0.5 for some n - kind of like a half life?
+discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
 dqn_agent = DQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=3000, # was soft update parameter?
-                                  policy=policy, gamma=0.97, train_interval=6,  # gamma of 97 because a lot can change from now til end of car run
-                                  nb_steps_warmup=256, batch_size=32,   # i'm going to view gamma like a confidence level in q val estimate
+                                  policy=policy, gamma=discount_rate, train_interval=6,     
+                                  nb_steps_warmup=384, batch_size=32,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor)
 
-dqn_agent.compile(RMSprop(lr=0.00025), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_1216_01.h5'
-want_to_train = True
-train_from_weights_in_weights_filename = True
+dqn_agent.compile(RMSprop(lr=0.0025), metrics=['mae']) # not use mse since |reward| <= 1.0
+
+weights_filename = 'dqn_collision_avoidance_0115_01.h5'
+want_to_train = False
+load_in_weights_in_weights_filename = True
 
 if want_to_train is True:
 
   # note: interval's units are episode_steps
   callbacks_list = [ModelIntervalCheckpoint(filepath=weights_filename, verbose=5, interval=400)]
 
-  if train_from_weights_in_weights_filename:
+  if load_in_weights_in_weights_filename:
     try:
       dqn_agent.load_weights(weights_filename)
       print('Successfully loaded DQN weights')
