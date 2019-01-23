@@ -76,12 +76,23 @@ env = AirSimEnv(num_steering_angles=5,
 
 num_steering_angles = env.action_space.n
 
-NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 1
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 2
 STACK_EVERY_N_FRAMES = 1  # don't change this for now
 
-SCENE_INPUT_SHAPE = env.SCENE_INPUT_SHAPE
-DEPTH_INPUT_SHAPE = env.DEPTH_PLANNER_INPUT_SHAPE
-SENSOR_INPUT_SHAPE =  env.SENSOR_INPUT_SHAPE
+SCENE_INPUT_SHAPE = None
+DEPTH_INPUT_SHAPE = None
+SENSOR_INPUT_SHAPE = None
+# split into if else because want to avoid the extra
+# (...,1) at the end messes up the dimensionality of input to NN
+# when the inputs are stacked
+if NUM_FRAMES_TO_STACK_INCLUDING_CURRENT == 1: 
+  SCENE_INPUT_SHAPE = env.SCENE_INPUT_SHAPE + (1,)
+  DEPTH_INPUT_SHAPE = env.DEPTH_PLANNER_INPUT_SHAPE + (1,)
+  SENSOR_INPUT_SHAPE =  env.SENSOR_INPUT_SHAPE + (1,)
+else:
+  SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE
+  DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE
+  SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE
 
 print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 
@@ -89,19 +100,19 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 # BEGIN MODEL - 
 #first input model - height, width, num_channels (gray, so only 1 channel)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
-scene_conv_1 = Conv2D(32, kernel_size=(7,7), strides=(5, 5), data_format='channels_last')(scene_nn_input)
+scene_conv_1 = Conv2D(32, kernel_size=(7,7), strides=(5, 5), data_format='channels_first')(scene_nn_input)
 scene_norm_1 = BatchNormalization()(scene_conv_1)# https://arxiv.org/pdf/1502.03167.pdf
 scene_1_activation = Activation('relu')(scene_norm_1)
 
-scene_conv_2 = Conv2D(64, kernel_size=(5,5), strides=(3, 3), data_format='channels_last')(scene_1_activation)
+scene_conv_2 = Conv2D(64, kernel_size=(5,5), strides=(3, 3), data_format='channels_first')(scene_1_activation)
 scene_norm_2 = BatchNormalization()(scene_conv_2)# why in between?: https://arxiv.org/pdf/1502.03167.pdf
 scene_2_activation = Activation('relu')(scene_norm_2)
 
-scene_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(3, 3), data_format='channels_last')(scene_2_activation)
+scene_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(3, 3), data_format='channels_first')(scene_2_activation)
 scene_norm_3 = BatchNormalization()(scene_conv_3)# https://arxiv.org/pdf/1502.03167.pdf
 scene_3_activation = Activation('relu')(scene_norm_3)
 
-scene_conv_4 = Conv2D(64, kernel_size=(3,3), strides=(2, 2), data_format='channels_last')(scene_3_activation)
+scene_conv_4 = Conv2D(64, kernel_size=(3,3), strides=(2, 2), data_format='channels_first')(scene_3_activation)
 scene_norm_4 = BatchNormalization()(scene_conv_4)# https://arxiv.org/pdf/1502.03167.pdf
 scene_4_activation = Activation('relu')(scene_norm_4)
 
@@ -111,15 +122,15 @@ scene_flat = Flatten()(scene_conv_4)
 # not as deep as scene NN because depth not contain as much info per image
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
 
-depth_conv_1 = Conv2D(32, kernel_size=(5,5), strides=(3, 3), data_format='channels_last')(depth_nn_input)
+depth_conv_1 = Conv2D(32, kernel_size=(5,5), strides=(3, 3), data_format='channels_first')(depth_nn_input)
 depth_norm_1 = BatchNormalization()(depth_conv_1)# https://arxiv.org/pdf/1502.03167.pdf
 depth_1_activation = Activation('relu')(depth_norm_1)
 
-depth_conv_2 = Conv2D(64, kernel_size=(4,4), strides=(2, 2), data_format='channels_last')(depth_1_activation)
+depth_conv_2 = Conv2D(64, kernel_size=(4,4), strides=(2, 2), data_format='channels_first')(depth_1_activation)
 depth_norm_2 = BatchNormalization()(depth_conv_2)# https://arxiv.org/pdf/1502.03167.pdf
 depth_2_activation = Activation('relu')(depth_norm_2)
 
-depth_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(2, 2), data_format='channels_last')(depth_2_activation)
+depth_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(2, 2), data_format='channels_first')(depth_2_activation)
 depth_norm_3 = BatchNormalization()(depth_conv_3)# https://arxiv.org/pdf/1502.03167.pdf
 depth_3_activation = Activation('relu')(depth_norm_3)
 
@@ -148,8 +159,8 @@ merge = concatenate([scene_flat, depth_flat, sensor_output])
 
 # interpretation/combination model
 #concatenate_1 (Concatenate)     (None, 5195)         0          
-merged_dense_1 = Dense(384, activation='tanh')(merge)
-merged_dense_2 = Dense(512, activation='tanh')(merged_dense_1)
+merged_dense_1 = Dense(32, activation='tanh')(merge)
+merged_dense_2 = Dense(24, activation='tanh')(merged_dense_1)
 final_output = Dense(num_steering_angles, activation='linear')(merged_dense_2)
 
 model = Model(inputs=[scene_nn_input, depth_nn_input, sensor_input], outputs=final_output)
@@ -179,7 +190,7 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               nb_steps=50000) # of time steps to go from epsilon=value_max to =value_min
 
 
-multi_input_processor = MultiInputProcessor(num_inputs=3) # 3 inputs: scene img, depth img, sensor data
+multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
 future_time_steps_until_discount_rate_is_one_half = 25.0  # assuming ~ 4 time steps per simulation second
@@ -196,8 +207,8 @@ dqn_agent = DQNAgent(model=model,nb_actions=num_steering_angles,
 
 dqn_agent.compile(RMSprop(lr=0.0025), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_0115_01.h5'
-want_to_train = False
+weights_filename = 'dqn_collision_avoidance_012219_01.h5'
+want_to_train = True
 load_in_weights_in_weights_filename = True
 
 if want_to_train is True:

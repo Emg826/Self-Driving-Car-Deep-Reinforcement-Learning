@@ -60,9 +60,9 @@ class AirSimEnv(Env):
     a do nothing function.
     """
     # 1st 2 must reflect settings.json
-    self.SCENE_INPUT_SHAPE = (256, 256*3, 1)  # 1.0 / 0.4
-    self.DEPTH_PLANNER_INPUT_SHAPE = (256, 256*3, 1)  # 1.0 / 0.25
-    self.SENSOR_INPUT_SHAPE = (17,1)
+    self.SCENE_INPUT_SHAPE = (256, 256*3)  # 1.0 / 0.4
+    self.DEPTH_PLANNER_INPUT_SHAPE = (256, 256*3)  # 1.0 / 0.25
+    self.SENSOR_INPUT_SHAPE = (17,)
 
 
 
@@ -92,8 +92,8 @@ class AirSimEnv(Env):
 
 
     # note the shapes of inputs to the neural network; can retrieve in keras_drl_steering... .py
-    self.SCENE_INPUT_SHAPE = (self.last_scene_row_idx-self.first_scene_row_idx, self.SCENE_INPUT_SHAPE[1], 1)
-    self.DEPTH_PLANNER_INPUT_SHAPE = (self.last_depth_planner_row_idx-self.first_depth_planner_row_idx, self.DEPTH_PLANNER_INPUT_SHAPE[1], 1)
+    self.SCENE_INPUT_SHAPE = (self.last_scene_row_idx-self.first_scene_row_idx, self.SCENE_INPUT_SHAPE[1])
+    self.DEPTH_PLANNER_INPUT_SHAPE = (self.last_depth_planner_row_idx-self.first_depth_planner_row_idx, self.DEPTH_PLANNER_INPUT_SHAPE[1])
     self.SENSOR_INPUT_SHAPE = self.SENSOR_INPUT_SHAPE
 
 
@@ -497,7 +497,7 @@ class AirSimEnv(Env):
     sensor_data =np.append(sensor_data, self.ending_coords.y_val)
 
     #print('sensor data shape', sensor_data.shape)  # for debug
-    return np.array(sensor_data).reshape(sensor_data.shape[0], 1)
+    return np.array(sensor_data).reshape(sensor_data.shape[0])
 
 
   def _extract_scene_image(self, sim_img_response_list):
@@ -526,7 +526,7 @@ class AirSimEnv(Env):
     # for debugging and getting cameras correct
     #cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
 
-    return img.reshape(img.shape[0], img.shape[1], 1)
+    return img.reshape(img.shape[0], img.shape[1])
 
 
   def _extract_depth_planner_image(self, sim_img_response_list):
@@ -576,7 +576,7 @@ class AirSimEnv(Env):
     #cv2.imwrite('depthPlanner_{}.jpg'.format(time.time()), img)
     #print('depth_planner img shape', img.shape)  # debug
 
-    return img.reshape(img.shape[0], img.shape[1], 1)
+    return img.reshape(img.shape[0], img.shape[1])
 
 
   def _request_sim_images(self, scene=True, depth_planner=True):
