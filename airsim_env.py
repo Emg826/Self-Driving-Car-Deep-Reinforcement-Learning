@@ -365,11 +365,11 @@ class AirSimEnv(Env):
          (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
       self.distance_since_last_collision = 0.0
       reward = -0.05
-    """
-    # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
-    elif (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
-      reward = -1.0
-    """
+      """
+      # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
+      elif (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
+        reward = -1.0
+      """
 
     else:
       """

@@ -189,7 +189,7 @@ replay_memory = SkippingMemory(limit=2*10**4,
 # something like: w/ probability epsilon (which decays through training),
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
-num_total_training_steps = 150000
+
 
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               attr='eps',
@@ -214,12 +214,12 @@ dqn_agent = DQNAgent(model=model,nb_actions=num_steering_angles,
                                   processor=multi_input_processor)
 
 
-dqn_agent.compile(RMSprop(lr=0.0025), metrics=['mae']) # not use mse since |reward| <= 1.0
+dqn_agent.compile(RMSprop(lr=0.025), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_012219_02.h5'
+weights_filename = 'dqn_collision_avoidance_012319_01.h5'
 want_to_train = True
 load_in_weights_in_weights_filename = True
-
+num_total_training_steps = 150000
 if want_to_train is True:
 
   # note: interval's units are episode_steps
@@ -238,4 +238,4 @@ if want_to_train is True:
   dqn_agent.save_weights(weights_filename)
 else: # else want to test
     dqn_agent.load_weights(weights_filename)
-    dqn_agent.test(env, nb_episodes=12, visualize=True)
+    dqn_agent.test(env, nb_episodes=10, visualize=False)
