@@ -24,7 +24,7 @@ class MultiInputProcessor(Processor):
     # handle the feed fwd case where, for whatever reason, keras-rl's
     # dqn compute_batch function, when it calls process_batch, wraps the batch
     # in a numpy array
-    print(state_batch.shape)
+    #print(state_batch.shape)  # debug
 
     state_batch_separated_by_input = [[] for x in range(self.num_inputs)]
 
@@ -49,7 +49,8 @@ class MultiInputProcessor(Processor):
           # we want to make num_inputs number of appends. instead of appending
           # a single image or a 1D array of sensor data to each of the num_inputs
           # lists in state_batch_sep, we want to append a list num_inputs_stacked long
-          print(input_stack[0].shape, input_stack[1].shape)
+          
+          #print(input_stack[0].shape, input_stack[1].shape)  # debug
 
           # for each kind of the num_inputs (3) inputs -- a col idx
           for idx_of_current_input_type in range(0, self.num_inputs):
@@ -64,7 +65,7 @@ class MultiInputProcessor(Processor):
             # to state_batch_sep
             state_batch_separated_by_input[idx_of_current_input_type].append(stack_of_current_type_of_input)
 
-    print(len(state_batch_separated_by_input),len(state_batch_separated_by_input[0]))
+    #print(len(state_batch_separated_by_input),len(state_batch_separated_by_input[0]))  # debug
         
       
 

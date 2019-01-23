@@ -355,6 +355,7 @@ class AirSimEnv(Env):
     # id -1 if unnamed obj; not imply not colliding, just unnamed
     # if collided with something with a name
     sec_since_last_collision = time.time() -  collision_info.time_stamp*10**(-9)
+
     if sec_since_last_collision < self.seconds_between_collision_in_sim_and_register and collision_info.time_stamp != 0.0:  # irl seconds
       self.distance_since_last_collision = 0.0
       reward = -1.0
@@ -364,10 +365,11 @@ class AirSimEnv(Env):
          (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
       self.distance_since_last_collision = 0.0
       reward = -0.05
-
+    """
     # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
     elif (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
       reward = -1.0
+    """
 
     else:
       """
@@ -404,7 +406,7 @@ class AirSimEnv(Env):
       time_reward = max(-1.0, min(0, sim_secs_remaining_to_get_to_destination / current_estimate_of_sim_secs_from_beginning_get_to_destination))    # 1 - proportion saying how far along the car is to arriving @ destination
 
       # will always be >= 0
-      distance_reward = max(0.0, self.current_distance_travelled_towards_destination / self.total_distance_to_destination)
+      distance_reward = max(0.0, self.current_distance_travelled_towards_destination**2 / self.total_distance_to_destination**2)
 
       #reward = time_reward + distance_reward
       reward = max(0, distance_reward - 0.05)  # don't reward until get sufficiently far out - should help avoid driving in circles
