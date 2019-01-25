@@ -32,10 +32,10 @@ while True:
 
     if running_sim.poll() != None or running_client.poll() != None:
       running_sim.terminate()
-      time.sleep(3)
+      time.sleep(15)
       
       running_client.terminate()
-      time.sleep(3)
+      time.sleep(4)
       
       break
     

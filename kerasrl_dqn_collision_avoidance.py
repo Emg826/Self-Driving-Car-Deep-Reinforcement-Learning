@@ -39,7 +39,9 @@ from keras.layers import Input, Dense, Flatten, LocallyConnected2D, BatchNormali
 from keras.layers.convolutional import Conv2D
 from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import concatenate
-from keras.optimizers import RMSprop
+from keras.optimizers import RMSprop, SGD
+from keras.layers.advanced_activations import LeakyReLU
+
 
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
@@ -49,6 +51,9 @@ from rl.callbacks import ModelIntervalCheckpoint  # https://github.com/keras-rl/
 from airsim_env import AirSimEnv
 from skipping_memory import SkippingMemory
 from multi_input_processor import MultiInputProcessor
+from transparent_dqn import TransparentDQNAgent
+
+
 
 np.random.seed(7691)
 random.seed(6113)
@@ -62,7 +67,7 @@ K.set_session(K.tf.Session(config=cfg))
 PHI = lambda pixel: 255.0 if pixel < 3.90 else 450.0 / pixel
 
 env = AirSimEnv(num_steering_angles=5,
-                      max_num_steps_in_episode=10**4,
+                      max_num_steps_in_episode=650,
                       fraction_of_top_of_scene_to_drop=0.05,
                       fraction_of_bottom_of_scene_to_drop=0.1,
                       fraction_of_top_of_depth_to_drop=0.3,
@@ -76,8 +81,8 @@ env = AirSimEnv(num_steering_angles=5,
 
 num_steering_angles = env.action_space.n
 
-NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 4
-STACK_EVERY_N_FRAMES = 1  # don't change this for now
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 2
+STACK_EVERY_N_FRAMES = 2  # don't change this for now
 
 SCENE_INPUT_SHAPE = None
 DEPTH_INPUT_SHAPE = None
@@ -100,39 +105,32 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 # BEGIN MODEL - 
 #first input model - height, width, num_channels (gray, so only 1 channel)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
-scene_conv_1 = Conv2D(64, kernel_size=(8,8), strides=(2, 6), data_format='channels_first')(scene_nn_input)
-scene_norm_1 = BatchNormalization()(scene_conv_1)# https://arxiv.org/pdf/1502.03167.pdf
-scene_1_activation = Activation('relu')(scene_norm_1)
+scene_conv_1 = Conv2D(64, kernel_size=(7,7), strides=(2, 5), data_format='channels_first')(scene_nn_input)
+scene_1_activation = LeakyReLU(0.1)(scene_conv_1)
 
 scene_conv_2 = Conv2D(96, kernel_size=(5,5), strides=(2, 3), data_format='channels_first')(scene_1_activation)
-scene_norm_2 = BatchNormalization()(scene_conv_2)# why in between?: https://arxiv.org/pdf/1502.03167.pdf
-scene_2_activation = Activation('relu')(scene_norm_2)
+scene_2_activation = LeakyReLU(0.1)(scene_conv_2)
 
 scene_conv_3 = Conv2D(96, kernel_size=(4,4), strides=(2, 3), data_format='channels_first')(scene_2_activation)
-scene_norm_3 = BatchNormalization()(scene_conv_3)# https://arxiv.org/pdf/1502.03167.pdf
-scene_3_activation = Activation('relu')(scene_norm_3)
+scene_3_activation = LeakyReLU(0.1)(scene_conv_3)
 
-scene_conv_4 = Conv2D(128, kernel_size=(3,3), strides=(2, 2), data_format='channels_first')(scene_3_activation)
-scene_norm_4 = BatchNormalization()(scene_conv_4)# https://arxiv.org/pdf/1502.03167.pdf
-scene_4_activation = Activation('relu')(scene_norm_4)
+scene_conv_4 = Conv2D(96, kernel_size=(4,3), strides=(2, 2), data_format='channels_first')(scene_3_activation)
+scene_4_activation = LeakyReLU(0.1)(scene_conv_4)
 
-scene_flat = Flatten()(scene_conv_4)
+scene_flat = Flatten()(scene_4_activation)
 
 
 # not as deep as scene NN because depth not contain as much info per image
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
 
 depth_conv_1 = Conv2D(64, kernel_size=(7,7), strides=(3, 5), data_format='channels_first')(depth_nn_input)
-depth_norm_1 = BatchNormalization()(depth_conv_1)# https://arxiv.org/pdf/1502.03167.pdf
-depth_1_activation = Activation('relu')(depth_norm_1)
+depth_1_activation = LeakyReLU(0.1)(depth_conv_1)
 
-depth_conv_2 = Conv2D(96, kernel_size=(5,5), strides=(2, 4), data_format='channels_first')(depth_1_activation)
-depth_norm_2 = BatchNormalization()(depth_conv_2)# https://arxiv.org/pdf/1502.03167.pdf
-depth_2_activation = Activation('relu')(depth_norm_2)
+depth_conv_2 = Conv2D(64, kernel_size=(5,5), strides=(2, 4), data_format='channels_first')(depth_1_activation)
+depth_2_activation = LeakyReLU(0.1)(depth_conv_2)
 
 depth_conv_3 = Conv2D(96, kernel_size=(4,4), strides=(2, 3), data_format='channels_first')(depth_2_activation)
-depth_norm_3 = BatchNormalization()(depth_conv_3)# https://arxiv.org/pdf/1502.03167.pdf
-depth_3_activation = Activation('relu')(depth_norm_3)
+depth_3_activation = LeakyReLU(0.1)(depth_conv_3)
 
 depth_flat = Flatten()(depth_3_activation)
 
@@ -159,8 +157,8 @@ merge = concatenate([scene_flat, depth_flat, sensor_output])
 
 # interpretation/combination model
 # fully connected layers
-merged_dense_1 = Dense(512, activation='tanh')(merge)
-merged_dense_2 = Dense(1024, activation='tanh')(merged_dense_1)
+merged_dense_1 = Dense(384, activation='sigmoid')(merge)
+merged_dense_2 = Dense(512, activation='sigmoid')(merged_dense_1)
 final_output = Dense(num_steering_angles, activation='linear')(merged_dense_2)
 
 
@@ -194,32 +192,34 @@ replay_memory = SkippingMemory(limit=2*10**4,
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                               attr='eps',
                               value_max=1.0, # start off 100% random
-                              value_min=0.05,  # get to random action x% of time
-                              value_test=0.05,  # MUST BE >0 else, for whatever reason, won't get random start
-                              nb_steps=50000) # of time steps to go from epsilon=value_max to =value_min
+                              value_min=0.10,  # get to random action x% of time
+                              value_test=0.01,  # MUST BE >0 else, for whatever reason, won't get random start
+                              nb_steps=100000) # of time steps to go from epsilon=value_max to =value_min
 
 
 multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 25.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 30.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
-dqn_agent = DQNAgent(model=model,nb_actions=num_steering_angles,
+train_every_n_steps = 6
+dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
-                                  enable_dueling_network=False, target_model_update=3000, # was soft update parameter?
-                                  policy=policy, gamma=discount_rate, train_interval=6,     
+                                  enable_dueling_network=False, target_model_update=10000, # was soft update parameter?
+                                  policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
                                   nb_steps_warmup=256, batch_size=32,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor)
 
+#https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
+# lr := lr * ( 1 / (1 + (decay * iterations)))
+dqn_agent.compile(SGD(lr=0.001, decay=0.001665), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-dqn_agent.compile(RMSprop(lr=0.025), metrics=['mae']) # not use mse since |reward| <= 1.0
-
-weights_filename = 'dqn_collision_avoidance_012319_01.h5'
+weights_filename = 'dqn_collision_avoidance_012319_03.h5'
 want_to_train = True
 load_in_weights_in_weights_filename = True
-num_total_training_steps = 150000
+num_total_training_steps = 1000000
 if want_to_train is True:
 
   # note: interval's units are episode_steps

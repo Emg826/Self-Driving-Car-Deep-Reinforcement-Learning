@@ -158,7 +158,7 @@ class AirSimEnv(Env):
                                                             compress=False) ]
 
 
-    # ; ordering: 1 2 3 4 while Quaternionr() has 2 3 4 1 for some reason
+    # ; ordering: 1 2 3 4 in sim window while Quaternionr() has 2 3 4 1 for some reason
     self.reset_poses = [airsim.Pose(airsim.Vector3r(-727.012,-7.407,-.7),  # safe
                                                   airsim.Quaternionr(0,0,.016,1.0)),
                               airsim.Pose(airsim.Vector3r(-169.546, -316.207, -0.72), # safe
@@ -181,13 +181,13 @@ class AirSimEnv(Env):
                                               airsim.Quaternionr(0.0, 0.0, -0.002,1.0))]
 
     #  instead of driving about aimlessly, will try to arrive to 1 destination from 1 starting point
-    self.beginning_coords = airsim.Pose(airsim.Vector3r(-17.475, -28.334,-1.0),  # safe
-                                                  airsim.Quaternionr(0.0,0.0, 0.106, 0.994))
+    self.beginning_coords = airsim.Pose(airsim.Vector3r(12.314, -31.069, -0.93),  # safe
+                                                  airsim.Quaternionr(-0.004,0.008, 0.236, 0.972))
     self.ending_coords = airsim.Vector3r(122.288, 12.283, -1.0)  # appx 298 m from start; mostly straight
 
 
     # units are meters
-    self.ending_circle_radius = 8.0 # if car in circle w/ this radius, then car has arrived @ destination
+    self.ending_circle_radius = 12.0 # if car in circle w/ this radius, then car has arrived @ destination
 
     # stuff used in reward function
     self.total_distance_to_destination = self._manhattan_distance(self.ending_coords.x_val,
@@ -356,7 +356,11 @@ class AirSimEnv(Env):
     # if collided with something with a name
     sec_since_last_collision = time.time() -  collision_info.time_stamp*10**(-9)
 
-    if sec_since_last_collision < self.seconds_between_collision_in_sim_and_register and collision_info.time_stamp != 0.0:  # irl seconds
+    # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
+    if (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
+      reward = -1.0
+      
+    elif sec_since_last_collision < self.seconds_between_collision_in_sim_and_register and collision_info.time_stamp != 0.0:  # irl seconds
       self.distance_since_last_collision = 0.0
       reward = -1.0
 
@@ -364,12 +368,7 @@ class AirSimEnv(Env):
     elif (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0) or \
          (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
       self.distance_since_last_collision = 0.0
-      reward = -0.05
-      """
-      # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
-      elif (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
-        reward = -1.0
-      """
+      reward = -0.07
 
     else:
       """
@@ -406,7 +405,7 @@ class AirSimEnv(Env):
       time_reward = max(-1.0, min(0, sim_secs_remaining_to_get_to_destination / current_estimate_of_sim_secs_from_beginning_get_to_destination))    # 1 - proportion saying how far along the car is to arriving @ destination
 
       # will always be >= 0
-      distance_reward = max(0.0, self.current_distance_travelled_towards_destination**2 / self.total_distance_to_destination**2)
+      distance_reward = max(0.0, self.current_distance_travelled_towards_destination / self.total_distance_to_destination)
 
       #reward = time_reward + distance_reward
       reward = max(0, distance_reward - 0.05)  # don't reward until get sufficiently far out - should help avoid driving in circles
