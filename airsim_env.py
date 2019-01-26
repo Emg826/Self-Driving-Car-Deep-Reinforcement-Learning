@@ -298,8 +298,10 @@ class AirSimEnv(Env):
 
     :returns: what the cartpole example returns (standard? for openai gym env.reset())
     """
+
     self.client.simPause(True)
-    self.client.armDisarm(True)
+    time.sleep(1)
+
 
     self.total_num_episodes += 1
     self.total_num_steps += self.episode_step_count
@@ -313,6 +315,10 @@ class AirSimEnv(Env):
 
     self.client.simPause(False)
     self.client.reset()
+
+    # need next 2 because: https://microsoft.github.io/AirSim/docs/apis/
+    self.client.enableApiControl(True)
+    self.client.armDisarm(True)
     #reset_pose = self.reset_poses[random.randint(0, len(self.reset_poses)-1)]  # from when would drive aimlessly
 
     self.client.simSetVehiclePose(pose=self.beginning_coords,
@@ -412,7 +418,7 @@ class AirSimEnv(Env):
       reward = max(0, distance_reward - 0.05)  # don't reward until get sufficiently far out - should help avoid driving in circles
 
     # for debug
-    print('reward', reward)
+    #print('reward', reward)  # debug (don't want in training since stdout takes time)
     return reward
 
 
