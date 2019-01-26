@@ -52,7 +52,8 @@ class AirSimEnv(Env):
                   fraction_of_bottom_of_depth_to_drop=0.0,
                   seconds_pause_between_steps=0.03,  # gives rand num generator time to work (wasn't working b4)
                   seconds_between_collision_in_sim_and_register=1.5,  # note avg 4.12 steps per IRL sec on school computer
-                  lambda_function_to_apply_to_depth_pixels=None):
+                  lambda_function_to_apply_to_depth_pixels=None,
+                  need_channel_dimension=False):
     """
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
     and the looping through the image is handled by this class. Therefore, only 1
@@ -65,7 +66,7 @@ class AirSimEnv(Env):
     self.SENSOR_INPUT_SHAPE = (17,)
 
 
-
+    self.need_channel_dimension = need_channel_dimension
     # sim admin stuff
     self.seconds_pause_between_steps = seconds_pause_between_steps
     self.seconds_between_collision_in_sim_and_register = seconds_between_collision_in_sim_and_register
@@ -286,7 +287,7 @@ class AirSimEnv(Env):
     # check if made it to w/in the radius of the destination area/circle
     if self._arrived_at_destination(car_info):
       done = True
-      reward = 1.0
+      reward = 10.0
 
     return state_t2, reward_t, done, {}
 
@@ -498,7 +499,10 @@ class AirSimEnv(Env):
     sensor_data =np.append(sensor_data, self.ending_coords.y_val)
 
     #print('sensor data shape', sensor_data.shape)  # for debug
-    return np.array(sensor_data).reshape(sensor_data.shape[0])
+    if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
+      return np.array(sensor_data).reshape(sensor_data.shape[0], 1)
+    else:
+      return np.array(sensor_data).reshape(sensor_data.shape[0])
 
 
   def _extract_scene_image(self, sim_img_response_list):
@@ -527,7 +531,10 @@ class AirSimEnv(Env):
     # for debugging and getting cameras correct
     #cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
 
-    return img.reshape(img.shape[0], img.shape[1])
+    if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
+      return img.reshape(img.shape[0], img.shape[1], 1)
+    else:
+      return img
 
 
   def _extract_depth_planner_image(self, sim_img_response_list):
@@ -565,19 +572,22 @@ class AirSimEnv(Env):
     # canny edge detection - draws white-ish outlines on objects w/ distinct edges
     # surprisingly fast - averages about 0.000579 seconds
     img = np.array(img, np.uint8)
-    canny_edges = cv2.Canny(img, 15, 400)  # np.array, min, max intensity gradient
+    #canny_edges = cv2.Canny(img, 15, 400)  # np.array, min, max intensity gradient
 
     # dilate - stretch out the areas w/ white pixels (edges in canny_edges)
-    dilated_canny_edges = cv2.dilate(canny_edges, self.depth_planner_dilation_kernel, iterations = 1)
+    #dilated_canny_edges = cv2.dilate(canny_edges, self.depth_planner_dilation_kernel, iterations = 1)
 
     # overlay the dilated edges on the depth planner image (draw object outlines)
-    img = cv2.addWeighted(img, 0.75, dilated_canny_edges, 0.25, 30.0)
+    #img = cv2.addWeighted(img, 0.75, dilated_canny_edges, 0.25, 30.0)
 
     # for debugging and getting cameras correct
     #cv2.imwrite('depthPlanner_{}.jpg'.format(time.time()), img)
     #print('depth_planner img shape', img.shape)  # debug
 
-    return img.reshape(img.shape[0], img.shape[1])
+    if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
+      return img.reshape(img.shape[0], img.shape[1], 1)
+    else:
+      return img.reshape(img.shape[0], img.shape[1])
 
 
   def _request_sim_images(self, scene=True, depth_planner=True):

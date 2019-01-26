@@ -35,8 +35,9 @@ import math
 
 #from keras.utils import plot_model
 from keras.models import Model
-from keras.layers import Input, Dense, Flatten, LocallyConnected2D, BatchNormalization, Activation, SimpleRNN
+from keras.layers import Input, Dense, Flatten, LocallyConnected2D, BatchNormalization, Activation, SimpleRNN, Reshape
 from keras.layers.convolutional import Conv2D
+from keras.layers.convolutional_recurrent import ConvLSTM2D,ConvLSTM2DCell
 from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import concatenate
 from keras.optimizers import RMSprop, SGD
@@ -54,7 +55,6 @@ from multi_input_processor import MultiInputProcessor
 from transparent_dqn import TransparentDQNAgent
 
 
-
 np.random.seed(7691)
 random.seed(6113)
 
@@ -66,6 +66,7 @@ K.set_session(K.tf.Session(config=cfg))
 # have to be careful not to make PHI too complex, else decr num steps per IRL second
 PHI = lambda pixel: 255.0 if pixel < 3.90 else 450.0 / pixel
 
+need_5th_dimension = True
 env = AirSimEnv(num_steering_angles=5,
                       max_num_steps_in_episode=650,
                       fraction_of_top_of_scene_to_drop=0.05,
@@ -74,14 +75,15 @@ env = AirSimEnv(num_steering_angles=5,
                       fraction_of_bottom_of_depth_to_drop=0.45,
                       seconds_pause_between_steps=0.2,  # assuming sim clock =1.0, 1/this is num steps per sim sec
                       seconds_between_collision_in_sim_and_register=0.4,  # note avg 4.12 steps per IRL sec on school computer
-                      lambda_function_to_apply_to_depth_pixels=PHI)  # NN doesn't care if image looks  nice
+                      lambda_function_to_apply_to_depth_pixels=PHI,
+                      need_channel_dimension=need_5th_dimension)  # NN doesn't care if image looks  nice
                       # leaving ^ as None almost doubles num steps per IRL second, meaning
                       # can increase sim speed an get more done!
 
 
 num_steering_angles = env.action_space.n
 
-NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 2
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 3
 STACK_EVERY_N_FRAMES = 2  # don't change this for now
 
 SCENE_INPUT_SHAPE = None
@@ -95,9 +97,17 @@ if NUM_FRAMES_TO_STACK_INCLUDING_CURRENT == 1:
   DEPTH_INPUT_SHAPE = env.DEPTH_PLANNER_INPUT_SHAPE + (1,)
   SENSOR_INPUT_SHAPE =  env.SENSOR_INPUT_SHAPE + (1,)
 else:
-  SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE
-  DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE
-  SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE
+  # 5th dimension would be the channel dimension; don't need this if Conv2D
+  # but do need this if ConvRNN2D or ConvRNN
+  if need_5th_dimension:
+    SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (1,)
+    DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE + (1,)
+    SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE + (1,)
+
+  else:
+    SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE
+    DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE
+    SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE
 
 print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 
@@ -105,34 +115,35 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 # BEGIN MODEL - 
 #first input model - height, width, num_channels (gray, so only 1 channel)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
-scene_conv_1 = Conv2D(64, kernel_size=(7,7), strides=(2, 5), data_format='channels_first')(scene_nn_input)
-scene_1_activation = LeakyReLU(0.1)(scene_conv_1)
+scene_conv_1 = ConvLSTM2D(32, kernel_size=(6, 8), strides=(3, 4), data_format='channels_last', return_sequences=True)(scene_nn_input)
+scene_1_activation = LeakyReLU(0.05)(scene_conv_1)
 
-scene_conv_2 = Conv2D(96, kernel_size=(5,5), strides=(2, 3), data_format='channels_first')(scene_1_activation)
-scene_2_activation = LeakyReLU(0.1)(scene_conv_2)
+scene_conv_2 = ConvLSTM2D(64, kernel_size=(6, 7), strides=(3, 4), data_format='channels_last', return_sequences=True)(scene_1_activation)
+scene_2_activation = LeakyReLU(0.05)(scene_conv_2)
 
-scene_conv_3 = Conv2D(96, kernel_size=(4,4), strides=(2, 3), data_format='channels_first')(scene_2_activation)
-scene_3_activation = LeakyReLU(0.1)(scene_conv_3)
+scene_conv_3 = ConvLSTM2D(32, kernel_size=(5, 5), strides=(3, 4), data_format='channels_last', return_sequences=True)(scene_2_activation)
+scene_3_activation = LeakyReLU(0.05)(scene_conv_3)
 
-scene_conv_4 = Conv2D(96, kernel_size=(4,3), strides=(2, 2), data_format='channels_first')(scene_3_activation)
-scene_4_activation = LeakyReLU(0.1)(scene_conv_4)
 
-scene_flat = Flatten()(scene_4_activation)
+#scene_flat = Flatten()(scene_4_activation)
+print(scene_3_activation._keras_shape)
+out_shape = scene_3_activation._keras_shape  # https://github.com/keras-team/keras/issues/1981#issuecomment-301327235
+scene_reshaped = Reshape(target_shape=(NUM_FRAMES_TO_STACK_INCLUDING_CURRENT, out_shape[2]*out_shape[3]*out_shape[4]))(scene_3_activation)
 
 
 # not as deep as scene NN because depth not contain as much info per image
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
 
-depth_conv_1 = Conv2D(64, kernel_size=(7,7), strides=(3, 5), data_format='channels_first')(depth_nn_input)
-depth_1_activation = LeakyReLU(0.1)(depth_conv_1)
+depth_conv_1 = ConvLSTM2D(32, kernel_size=(5,8), strides=(4,6), data_format='channels_last', return_sequences=True)(depth_nn_input)
+depth_1_activation = LeakyReLU(0.05)(depth_conv_1)
 
-depth_conv_2 = Conv2D(64, kernel_size=(5,5), strides=(2, 4), data_format='channels_first')(depth_1_activation)
-depth_2_activation = LeakyReLU(0.1)(depth_conv_2)
+depth_conv_2 = ConvLSTM2D(32, kernel_size=(6,7), strides=(3,4), data_format='channels_last', return_sequences=True)(depth_1_activation)
+depth_2_activation = LeakyReLU(0.05)(depth_conv_2)
 
-depth_conv_3 = Conv2D(96, kernel_size=(4,4), strides=(2, 3), data_format='channels_first')(depth_2_activation)
-depth_3_activation = LeakyReLU(0.1)(depth_conv_3)
+#depth_flat = Flatten()(depth_3_activation)
+out_shape = depth_2_activation._keras_shape  # want to flatten the convolution, but keep the temporal stack
+depth_reshaped = Reshape(target_shape=(NUM_FRAMES_TO_STACK_INCLUDING_CURRENT, out_shape[2]*out_shape[3]*out_shape[4]))(depth_2_activation)
 
-depth_flat = Flatten()(depth_3_activation)
 
 # third input model - for the numeric sensor data  # 218 and 64 x 768
 """
@@ -150,25 +161,27 @@ x. linear velocity (x, y) # no accurate whatsoever (press ';' in sim to see)
 16-17. (x, y) coordinates of destination
 """
 sensor_input = Input(shape=SENSOR_INPUT_SHAPE)  # not much of a 'model', really...
+sensor_reshaped = Reshape(target_shape=(sensor_input._keras_shape[1], sensor_input._keras_shape[2]))(sensor_input)
 # SENSOR_INPUT_SHAPE[0] * SENSOR_INPUT_SHAPE[0]
-sensor_output = Flatten()(sensor_input)
+#sensor_output = Flatten()(sensor_input)
 
-merge = concatenate([scene_flat, depth_flat, sensor_output])
+merge = concatenate([scene_reshaped, depth_reshaped, sensor_reshaped])
 
 # interpretation/combination model
 # fully connected layers
+"""
 merged_dense_1 = Dense(384, activation='sigmoid')(merge)
 merged_dense_2 = Dense(512, activation='sigmoid')(merged_dense_1)
 final_output = Dense(num_steering_angles, activation='linear')(merged_dense_2)
+"""
 
-
-""" # ISSUE: RNN really only makes sense if there is a sequence of inputs;
+# ISSUE: RNN really only makes sense if there is a sequence of inputs;
 # however, CNN's filters will scan all N stacked frames @ once: ie it will
 # mix the sequence together. 
-merged_simplernn_1 = SimpleRNN(512, activation='tanh')(merge)
-merged_simplernn_2 = SimpleRNN(1024, activation='tanh')(merged_simplernn_1)
+merged_simplernn_1 = SimpleRNN(64, activation='tanh', return_sequences=True)(merge)
+merged_simplernn_2 = SimpleRNN(64, activation='tanh')(merged_simplernn_1)
 final_output = Dense(num_steering_angles, activation='linear')(merged_simplernn_2)
-"""
+
 
 model = Model(inputs=[scene_nn_input, depth_nn_input, sensor_input], outputs=final_output)
 # summarize layers
@@ -204,19 +217,20 @@ future_time_steps_until_discount_rate_is_one_half = 30.0  # assuming ~ 4 time st
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
-train_every_n_steps = 6
+train_every_n_steps = 4
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=10000, # was soft update parameter?
-                                  policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=256, batch_size=32,   # i'm going to view gamma like a confidence level in q val estimate
-                                  processor=multi_input_processor)
+                                  policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=64, batch_size=6,   # batch size 32 caused gpu to run out of memory (13M)
+                                  processor=multi_input_processor) #Resource exhausted: OOM when allocating tensor with shape[32,71,191,32] and type bool on /job:localhost/replica:0/task:0/device:GPU:0 by allocator GPU_0_bfc
+
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 # lr := lr * ( 1 / (1 + (decay * iterations)))
-dqn_agent.compile(SGD(lr=0.001, decay=0.001665), metrics=['mae']) # not use mse since |reward| <= 1.0
+dqn_agent.compile(SGD(lr=0.005, decay=0.0001665), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_012319_03.h5'
+weights_filename = 'dqn_collision_avoidance_012319_04.h5'
 want_to_train = True
 load_in_weights_in_weights_filename = True
 num_total_training_steps = 1000000
