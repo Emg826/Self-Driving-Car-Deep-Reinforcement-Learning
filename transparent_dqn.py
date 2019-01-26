@@ -30,8 +30,8 @@ class TransparentDQNAgent(DQNAgent):
     self.forward_passes_since_last_print += 1
     if self.print_frequency == self.forward_passes_since_last_print:
       # put max value in []
-      printable_q_values = q_values.copy()
-
+      printable_q_values = list(q_values.copy())
+      
       max_q_value = -1000000
       max_q_value_idx = -1
 

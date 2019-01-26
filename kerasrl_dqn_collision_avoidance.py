@@ -64,7 +64,7 @@ cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
 K.set_session(K.tf.Session(config=cfg))
 
 # have to be careful not to make PHI too complex, else decr num steps per IRL second
-PHI = lambda pixel: 255.0 if pixel < 3.90 else 450.0 / pixel
+PHI = lambda pixel: 255.0 if pixel < 4.3 else 450.0 / pixel
 
 need_channel_dimension = True
 concat_coord_conv_layers = True
@@ -120,10 +120,10 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
 scene_coord_conv_inputs = CoordinateChannel2D(use_radius=True, data_format='channels_last')(scene_nn_input)
 
-scene_conv_1 = Conv2D(64, kernel_size=(7,7), strides=(3, 4), data_format='channels_last')(scene_coord_conv_inputs)
+scene_conv_1 = Conv2D(64, kernel_size=(8,8), strides=(3, 4), data_format='channels_last')(scene_coord_conv_inputs)
 scene_1_activation = LeakyReLU(0.1)(scene_conv_1)
 
-scene_conv_2 = Conv2D(96, kernel_size=(5,5), strides=(2, 3), data_format='channels_last')(scene_1_activation)
+scene_conv_2 = Conv2D(128, kernel_size=(5,5), strides=(2, 3), data_format='channels_last')(scene_1_activation)
 scene_2_activation = LeakyReLU(0.1)(scene_conv_2)
 
 scene_conv_3 = Conv2D(128, kernel_size=(4,4), strides=(2, 3), data_format='channels_last')(scene_2_activation)
@@ -139,13 +139,13 @@ scene_flat = Flatten()(scene_4_activation)
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
 depth_coord_conv_input = CoordinateChannel2D(use_radius=True, data_format='channels_last')(depth_nn_input)
 
-depth_conv_1 = Conv2D(64, kernel_size=(7,7), strides=(3, 4), data_format='channels_last')(depth_coord_conv_input)
+depth_conv_1 = Conv2D(64, kernel_size=(8,8), strides=(3, 4), data_format='channels_last')(depth_coord_conv_input)
 depth_1_activation = LeakyReLU(0.1)(depth_conv_1)
 
 depth_conv_2 = Conv2D(96, kernel_size=(5,5), strides=(2, 3), data_format='channels_last')(depth_1_activation)
 depth_2_activation = LeakyReLU(0.1)(depth_conv_2)
 
-depth_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(2, 3), data_format='channels_last')(depth_2_activation)
+depth_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(2, 4), data_format='channels_last')(depth_2_activation)
 depth_3_activation = LeakyReLU(0.1)(depth_conv_3)
 
 depth_flat = Flatten()(depth_3_activation)
@@ -196,7 +196,7 @@ print(model.summary())
 
 
 #replay_memory = SequentialMemory(limit=10**4, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
-replay_memory = SkippingMemory(limit=2*10**4,
+replay_memory = SkippingMemory(limit=10000,
                                num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
                                skip_factor=STACK_EVERY_N_FRAMES)
 
@@ -216,24 +216,24 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 30.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 25.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
-train_every_n_steps = 6
+train_every_n_steps = 3
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=10000, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=64, batch_size=24,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=64, batch_size=22,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
-                                  print_frequency=2)
+                                  print_frequency=5)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 # lr := lr * ( 1 / (1 + (decay * iterations)))
-dqn_agent.compile(SGD(lr=0.001, decay=0.001665), metrics=['mae']) # not use mse since |reward| <= 1.0
+dqn_agent.compile(SGD(lr=0.005, decay=0.001665), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_012619_01.h5'
+weights_filename = 'dqn_collision_avoidance_012619_02.h5'
 want_to_train = True
 load_in_weights_in_weights_filename = True
 num_total_training_steps = 1000000
@@ -251,7 +251,8 @@ if want_to_train is True:
 
   dqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
                       visualize=False, verbose=False)
-
+  
+  dqn_agent.memory.write_transitions_to_file()
   dqn_agent.save_weights(weights_filename)
 else: # else want to test
     dqn_agent.load_weights(weights_filename)

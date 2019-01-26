@@ -9,6 +9,8 @@ https://docs.python.org/2/library/collections.html#collections.deque
 from rl.memory import Memory, sample_batch_indexes
 from collections import namedtuple, deque # pronounced "deck"
 from random import sample
+import numpy as np
+import time
 
 # as per keras-rl/rl/memory.py
 Experience = namedtuple('Experience', 'state0, action, reward, state1, terminal1')
@@ -230,3 +232,13 @@ class SkippingMemory():
         return True
 
     return False
+
+  def write_transitions_to_file(self):
+    mark_time = int(time.time())
+    np.save('npy/states_{}_.npy'.format(mark_time), np.array(self.states))
+    np.save('npy/actions_{}_.npy'.format(mark_time), np.array(self.actions))
+    np.save('npy/rewards_{}_.npy'.format(mark_time), np.array(self.rewards))
+    np.save('npy/terminals_{}_.npy'.format(mark_time), np.array(self.terminals))
+
+    
+    
