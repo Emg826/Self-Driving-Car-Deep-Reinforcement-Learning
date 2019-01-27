@@ -74,7 +74,7 @@ env = AirSimEnv(num_steering_angles=5,
                       fraction_of_bottom_of_scene_to_drop=0.1,
                       fraction_of_top_of_depth_to_drop=0.3,
                       fraction_of_bottom_of_depth_to_drop=0.45,
-                      seconds_pause_between_steps=0.15,  # assuming sim clock =1.0, 1/this is num steps per sim sec
+                      seconds_pause_between_steps=0.2,  # assuming sim clock =1.0, 1/this is num steps per sim sec
                       seconds_between_collision_in_sim_and_register=0.4,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_depth_pixels=PHI,
                       need_channel_dimension=need_channel_dimension)  # NN doesn't care if image looks  nice
@@ -220,12 +220,12 @@ future_time_steps_until_discount_rate_is_one_half = 25.0  # assuming ~ 4 time st
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
-train_every_n_steps = 3
+train_every_n_steps = 4
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=10000, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=64, batch_size=22,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=512, batch_size=16,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
                                   print_frequency=5)
 
@@ -233,7 +233,7 @@ dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
 # lr := lr * ( 1 / (1 + (decay * iterations)))
 dqn_agent.compile(SGD(lr=0.005, decay=0.001665), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_012619_02.h5'
+weights_filename = 'dqn_collision_avoidance_012619_03.h5'
 want_to_train = True
 load_in_weights_in_weights_filename = True
 num_total_training_steps = 1000000
@@ -252,7 +252,9 @@ if want_to_train is True:
   dqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
                       visualize=False, verbose=False)
   
-  dqn_agent.memory.write_transitions_to_file()
+  if env.total_num_steps > 5000:
+    dqn_agent.memory.write_transitions_to_file()
+    
   dqn_agent.save_weights(weights_filename)
 else: # else want to test
     dqn_agent.load_weights(weights_filename)
