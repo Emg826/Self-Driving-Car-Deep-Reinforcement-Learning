@@ -58,9 +58,9 @@ client.simSetCameraOrientation(backward_cam_name,
 # height = 256 * (1/(1-0.325-0.375)) = 853 height
 
 
-left_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=-0.775, roll=0.0)
+left_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=-1.52, roll=0.0)
 forward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
-right_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.775, roll=0.0)
+right_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=1.55, roll=0.0)
 backward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
 
 
@@ -119,15 +119,15 @@ img = np.concatenate([airsim.list_to_2d_float_array(img_response_obj.image_data_
                                                     img_response_obj.height,) for img_response_obj in sim_img_responses],
                      axis=1)
 
-fraction_of_top_of_scene_to_drop = 0.00
-fraction_of_bottom_of_scene_to_drop = 0.4
+fraction_of_top_of_scene_to_drop = 0.3
+fraction_of_bottom_of_scene_to_drop = 0.45
 first_scene_row_idx = int(img.shape[0] * fraction_of_top_of_scene_to_drop)
 last_scene_row_idx = int(img.shape[0] * (1-fraction_of_bottom_of_scene_to_drop))
 img = img[first_scene_row_idx: last_scene_row_idx]
 
 
 # 255 * 2 = 510
-PHI = lambda pixel: 255.0 if pixel < 3.90 else 450.0 / pixel
+PHI = lambda pixel: 0.0 if pixel < 0.575 else 724.0 / pixel
 # this function is about 40% faster than the previous min/max func (below)
 #PHI = lambda pixel:   min(1024.0 / (pixel+3.0), 255.0)
 

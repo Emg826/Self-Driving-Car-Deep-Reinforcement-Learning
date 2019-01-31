@@ -17,13 +17,15 @@
       "ImageType": 0,
       "Width": 256,
       "Height": 256,
-      "FOV_Degrees": 45
+      "FOV_Degrees": 90,
+      "AutoExposureSpeed": 35,
+      "TargetGamma": 2.0
     },
     {
       "ImageType": 1,
       "Width": 256,
       "Height": 256,
-      "FOV_Degrees": 45
+      "FOV_Degrees": 90
     }]
   }           
 }
@@ -64,17 +66,19 @@ cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
 K.set_session(K.tf.Session(config=cfg))
 
 # have to be careful not to make PHI too complex, else decr num steps per IRL second
-PHI = lambda pixel: 255.0 if pixel < 4.3 else 450.0 / pixel
+PHI = lambda pixel: 0.0 if pixel < 0.575 else 724.0 / pixel
 
+# IRL seconds # x1.0 speed: 9.4 steps per sim sec @ 0.05 wait; 7.5 spss @ 0.1; 3.7 spss @ 0.2 wait
+# IRL seconds  #x2.0 speed: 4.5 steps per IRL second @ 0,2 wait
 need_channel_dimension = True
 concat_coord_conv_layers = True
 env = AirSimEnv(num_steering_angles=5,
                       max_num_steps_in_episode=650,
-                      fraction_of_top_of_scene_to_drop=0.05,
+                      fraction_of_top_of_scene_to_drop=0.05,  
                       fraction_of_bottom_of_scene_to_drop=0.1,
                       fraction_of_top_of_depth_to_drop=0.3,
                       fraction_of_bottom_of_depth_to_drop=0.45,
-                      seconds_pause_between_steps=0.2,  # assuming sim clock =1.0, 1/this is num steps per sim sec
+                      seconds_pause_between_steps=0.225,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
                       seconds_between_collision_in_sim_and_register=0.4,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_depth_pixels=PHI,
                       need_channel_dimension=need_channel_dimension)  # NN doesn't care if image looks  nice
@@ -216,7 +220,7 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 25.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 35.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
@@ -233,8 +237,9 @@ dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
 # lr := lr * ( 1 / (1 + (decay * iterations)))
 dqn_agent.compile(SGD(lr=0.005, decay=0.001665), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_012619_03.h5'
-want_to_train = True
+weights_filename = 'dqn_collision_avoidance_013019_01.h5'
+#weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
+want_to_train = False
 load_in_weights_in_weights_filename = True
 num_total_training_steps = 1000000
 if want_to_train is True:

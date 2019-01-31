@@ -16,15 +16,17 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
       "ImageType": 0,
       "Width": 256,
       "Height": 256,
-      "FOV_Degrees": 45
+      "FOV_Degrees": 90,
+      "AutoExposureSpeed": 35,
+      "TargetGamma": 2.0
     },
     {
       "ImageType": 1,
       "Width": 256,
       "Height": 256,
-      "FOV_Degrees": 45
+      "FOV_Degrees": 90
     }]
-  }
+  }           
 }
 
 """
@@ -190,7 +192,8 @@ class AirSimEnv(Env):
 
     self.beginning_coords = airsim.Pose(airsim.Vector3r(30.977, -477.728, -0.65),  # safe
                                                   airsim.Quaternionr(0.0,0.0, 0.007, 1.000))
-    self.ending_coords = airsim.Vector3r(109.694, -396.685, -1.0)  # appx 298 m from start; mostly straight
+    #self.ending_coords = airsim.Vector3r(109.694, -396.685, -1.0)  # appx 298 m from start; mostly straight
+    self.ending_coords = airsim.Vector3r(62.549, -192.0, -1.0)  # appx 298 m from start; mostly straight
 
     # units are meters
     self.ending_circle_radius = 10.0 # if car in circle w/ this radius, then car has arrived @ destination
@@ -201,12 +204,14 @@ class AirSimEnv(Env):
                                                                                          self.ending_coords.y_val,
                                                                                          self.beginning_coords.position.y_val)
     self.current_distance_from_destination = self.total_distance_to_destination
-    self.episode_time_in_simulation_secs = 1.0   # tracks time between unpause and pause in step; used
+    self.elapsed_episode_time_in_simulation_secs = 1.0   # tracks time between unpause and pause in step; used
     self.current_distance_travelled_towards_destination = 0.0
     self.episode_time_in_irl_seconds = 0.0  # only used for debug and steps/second measurement,
     # not for tracking progress in sim; note: sim steps per real life seconds is ~6
 
     print('The car will need to travel {} simulation meters to arrive at the destination'.format(self.total_distance_to_destination))
+
+
 
 
   def step(self, action):
@@ -229,18 +234,24 @@ class AirSimEnv(Env):
     # BEGIN TIMESTEP
     self.client.simPause(False)  # unpause AirSim
     sim_unpaused_start_time = time.time()  # used to track time at which sim is unpaused
-
-    self.client.setCarControls(self.car_controls)
+    self.client.setCarControls(self.car_controls)  # tested to see if conrols changed even if set before unpause: it does
 
     time.sleep(self.seconds_pause_between_steps)  # take this action for user specified amt of IRL seconds
 
-    # can't get this information once pause, so get it now
+
+    # can, in fact, get this information once pause, so get it now
     list_of_img_response_objects = self._request_sim_images()
     collision_info = self.client.simGetCollisionInfo()
     car_info = self.client.getCarState()
 
     self.client.simPause(True)  # pause to do backend stuff
-    self.episode_time_in_simulation_secs += time.time() - sim_unpaused_start_time
+    self.elapsed_episode_time_in_simulation_secs += time.time() - sim_unpaused_start_time
+    # END TIMESTEP
+    
+    # can, in fact, get this information once pause, so get it now
+    list_of_img_response_objects = self._request_sim_images()
+    collision_info = self.client.simGetCollisionInfo()
+    car_info = self.client.getCarState()
 
     # END TIMESTEP
     # BEGIN BACKEND   # reward_t and state_t2
@@ -288,7 +299,7 @@ class AirSimEnv(Env):
     if self.episode_step_count % 30 == 0:
       print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
                                                                                   (self.episode_step_count / (time.time() -self.episode_time_in_irl_seconds))))
-
+      print('\t...averaging {} steps per sim sec (assuming x1.0 speed).'.format(self.episode_step_count / (self.elapsed_episode_time_in_simulation_secs)))
     # check if made it to w/in the radius of the destination area/circle
     if self._arrived_at_destination(car_info):
       done = True
@@ -316,7 +327,7 @@ class AirSimEnv(Env):
     self.collisions_in_a_row = 0
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
 
-    self.episode_time_in_simulation_secs = 0.1  # avoid div by 0 err when call _make_state @ fin
+    self.elapsed_episode_time_in_simulation_secs = 0.1  # avoid div by 0 err when call _make_state @ fin
 
     self.client.simPause(False)
     self.client.reset()
@@ -331,7 +342,7 @@ class AirSimEnv(Env):
 
     self.episode_time_in_irl_seconds = time.time()  # again, for debug purposes
     self.current_distance_from_destination = self.total_distance_to_destination
-    self.episode_time_in_simulation_secs = 1.0
+    self.elapsed_episode_time_in_simulation_secs = 1.0
 
     time.sleep(4)  # crash issue with requesting stuff before actually capable of resettting? idk
 
@@ -408,25 +419,25 @@ class AirSimEnv(Env):
       #print(self.distance_since_last_collision, total_distance_contrib + steering_contrib)
       return total_distance_contrib + steering_contrib
       """
-      current_average_meters_per_sim_secs = self.current_distance_travelled_from_origin /  self.episode_time_in_simulation_secs
+      current_average_meters_per_sim_secs = self.current_distance_travelled_from_origin /  self.elapsed_episode_time_in_simulation_secs
 
       # time = distance / rate --- time to get from origin to end, at the average pace of the vehicle
       current_estimate_of_sim_secs_from_beginning_get_to_destination = self.total_distance_to_destination / current_average_meters_per_sim_secs
 
       # will go negative
-      sim_secs_remaining_to_get_to_destination = current_estimate_of_sim_secs_from_beginning_get_to_destination - self.episode_time_in_simulation_secs
+      sim_secs_remaining_to_get_to_destination = current_estimate_of_sim_secs_from_beginning_get_to_destination - self.elapsed_episode_time_in_simulation_secs
 
       # will always be <= 0
       time_reward = max(-1.0, min(0, sim_secs_remaining_to_get_to_destination / current_estimate_of_sim_secs_from_beginning_get_to_destination))    # 1 - proportion saying how far along the car is to arriving @ destination
 
       # will always be >= 0
-      distance_reward =  self.current_distance_travelled_towards_destination**2 / self.total_distance_to_destination**2
+      distance_reward =  self.current_distance_travelled_towards_destination / self.total_distance_to_destination
 
       #reward = time_reward + distance_reward
-      reward = max(0, distance_reward - 0.001)  # don't reward until get sufficiently far out - should help avoid driving in circles
+      reward = max(0, distance_reward - 0.02)  # don't reward until get sufficiently far out - should help avoid driving in circles
 
     # for debug
-    print('reward', reward)  # debug (don't want in training since stdout takes time)
+    #print('reward', reward)  # debug (don't want in training since stdout takes time)
     return reward
 
 
@@ -585,8 +596,8 @@ class AirSimEnv(Env):
 
     # canny edge detection - draws white-ish outlines on objects w/ distinct edges
     # surprisingly fast - averages about 0.000579 seconds
-    img = np.array(img, np.uint8)
-    #canny_edges = cv2.Canny(img, 15, 400)  # np.array, min, max intensity gradient
+    #img = np.array(img, np.uint8)
+    #canny_edges = cv2.Canny(img,10, 150)  # np.array, min, max intensity gradient
 
     # dilate - stretch out the areas w/ white pixels (edges in canny_edges)
     #dilated_canny_edges = cv2.dilate(canny_edges, self.depth_planner_dilation_kernel, iterations = 1)
@@ -630,9 +641,9 @@ class AirSimEnv(Env):
 
     :returns: nada
     """
-    left_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=-0.775, roll=0.0)
+    left_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=-1.52, roll=0.0)
     forward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
-    right_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.775, roll=0.0)
+    right_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=1.55, roll=0.0)
     backward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
 
 
