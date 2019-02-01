@@ -2,44 +2,13 @@
 Based on:
 https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
 """
-
-""" Copy and paste this into your settings.json (which hould be in your Documents folder)
-{
-  "SettingsVersion": 1.2,
-  "SimMode": "Car",
-  "RpcEnabled": true,
-  "ViewMode": "SpringArmChase",
-  "EngineSound": false,
-  "ClockSpeed": 1.0,
-  "CameraDefaults": {
-    "CaptureSettings": [{
-      "ImageType": 0,
-      "Width": 256,
-      "Height": 256,
-      "FOV_Degrees": 90,
-      "AutoExposureSpeed": 35,
-      "TargetGamma": 2.0
-    },
-    {
-      "ImageType": 1,
-      "Width": 256,
-      "Height": 256,
-      "FOV_Degrees": 90
-    }]
-  }           
-}
-
-"""
-
 from gym import spaces, Env
 import airsim
 import numpy as np
 import random
-import os
 import cv2
 import math
-import queue
-import time # just to check steps per second
+import time
 
 
 class AirSimEnv(Env):
@@ -47,13 +16,15 @@ class AirSimEnv(Env):
 
   def __init__(self,
                   num_steering_angles,
+                  depth_settings_md_size,
+                  scene_settings_md_size,
                   max_num_steps_in_episode=10**4,
                   fraction_of_top_of_scene_to_drop=0.0,
                   fraction_of_bottom_of_scene_to_drop=0.0,
                   fraction_of_top_of_depth_to_drop=0.0,
                   fraction_of_bottom_of_depth_to_drop=0.0,
-                  seconds_pause_between_steps=0.03,  # gives rand num generator time to work (wasn't working b4)
-                  seconds_between_collision_in_sim_and_register=1.5,  # note avg 4.12 steps per IRL sec on school computer
+                  seconds_pause_between_steps=0.1,  # gives rand num generator time to work (wasn't working b4)
+                  seconds_between_collision_in_sim_and_register=1.0,  # note avg 4.12 steps per IRL sec on school computer
                   lambda_function_to_apply_to_depth_pixels=None,
                   need_channel_dimension=False):
     """
@@ -63,8 +34,8 @@ class AirSimEnv(Env):
     a do nothing function.
     """
     # 1st 2 must reflect settings.json
-    self.SCENE_INPUT_SHAPE = (256, 256*3)  # 1.0 / 0.4
-    self.DEPTH_PLANNER_INPUT_SHAPE = (256, 256*3)  # 1.0 / 0.25
+    self.SCENE_INPUT_SHAPE = (scene_settings_md_size[0], scene_settings_md_size[1]*3)  # 1.0 / 0.4
+    self.DEPTH_PLANNER_INPUT_SHAPE = (depth_settings_md_size[0], depth_settings_md_size[1]*3)  # 1.0 / 0.25
     self.SENSOR_INPUT_SHAPE = (17,)
 
 
@@ -240,9 +211,6 @@ class AirSimEnv(Env):
 
 
     # can, in fact, get this information once pause, so get it now
-    list_of_img_response_objects = self._request_sim_images()
-    collision_info = self.client.simGetCollisionInfo()
-    car_info = self.client.getCarState()
 
     self.client.simPause(True)  # pause to do backend stuff
     self.elapsed_episode_time_in_simulation_secs += time.time() - sim_unpaused_start_time

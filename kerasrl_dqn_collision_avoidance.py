@@ -17,15 +17,13 @@
       "ImageType": 0,
       "Width": 256,
       "Height": 256,
-      "FOV_Degrees": 90,
-      "AutoExposureSpeed": 35,
-      "TargetGamma": 2.0
+      "FOV_Degrees": 60
     },
     {
       "ImageType": 1,
-      "Width": 256,
-      "Height": 256,
-      "FOV_Degrees": 90
+      "Width": 128,
+      "Height": 128,
+      "FOV_Degrees": 60
     }]
   }           
 }
@@ -38,10 +36,10 @@ import math
 
 #from keras.utils import plot_model
 from keras.models import Model
-from keras.layers import Input, Dense, Flatten, Activation, SimpleRNN
+from keras.layers import Input, Dense, Flatten, Activation, SimpleRNN, MaxPooling2D
 from keras.layers.convolutional import Conv2D
 from keras.layers.merge import concatenate
-from keras.optimizers import SGD
+from keras.optimizers import SGD, RMSprop, Adam
 from keras.layers.advanced_activations import LeakyReLU
 
 
@@ -78,10 +76,12 @@ env = AirSimEnv(num_steering_angles=5,
                       fraction_of_bottom_of_scene_to_drop=0.1,
                       fraction_of_top_of_depth_to_drop=0.3,
                       fraction_of_bottom_of_depth_to_drop=0.45,
-                      seconds_pause_between_steps=0.225,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
+                      seconds_pause_between_steps=0.20,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
                       seconds_between_collision_in_sim_and_register=0.4,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_depth_pixels=PHI,
-                      need_channel_dimension=need_channel_dimension)  # NN doesn't care if image looks  nice
+                      need_channel_dimension=need_channel_dimension,
+                      depth_settings_md_size=(128,128),
+                      scene_settings_md_size=(256,256))  # NN doesn't care if image looks  nice
                       # leaving ^ as None almost doubles num steps per IRL second, meaning
                       # can increase sim speed an get more done!
 
@@ -121,20 +121,23 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 
 # BEGIN MODEL - 
 #first input model - height, width, num_channels (gray, so only 1 channel)  # note - stride is what reduces the dimensions
+# inspired by https://github.com/dmlc/minerva/wiki/Walkthrough:-AlexNet
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
 scene_coord_conv_inputs = CoordinateChannel2D(use_radius=True, data_format='channels_last')(scene_nn_input)
 
-scene_conv_1 = Conv2D(64, kernel_size=(8,8), strides=(3, 4), data_format='channels_last')(scene_coord_conv_inputs)
-scene_1_activation = LeakyReLU(0.1)(scene_conv_1)
+scene_conv_1 = Conv2D(128, kernel_size=(11,11), strides=(3, 3), data_format='channels_last')(scene_coord_conv_inputs)
+scene_1_activation = LeakyReLU(0.15)(scene_conv_1)
+scene_1_pool = MaxPooling2D(pool_size=2)(scene_1_activation)
 
-scene_conv_2 = Conv2D(128, kernel_size=(5,5), strides=(2, 3), data_format='channels_last')(scene_1_activation)
-scene_2_activation = LeakyReLU(0.1)(scene_conv_2)
+scene_conv_2 = Conv2D(256, kernel_size=(5,5), strides=(2, 2), data_format='channels_last')(scene_1_pool)
+scene_2_activation = LeakyReLU(0.15)(scene_conv_2)
+scene_2_pool = MaxPooling2D(pool_size=2)(scene_2_activation)
 
-scene_conv_3 = Conv2D(128, kernel_size=(4,4), strides=(2, 3), data_format='channels_last')(scene_2_activation)
-scene_3_activation = LeakyReLU(0.1)(scene_conv_3)
+scene_conv_3 = Conv2D(256, kernel_size=(4,4), strides=(1 , 1), data_format='channels_last')(scene_2_pool)
+scene_3_activation = LeakyReLU(0.15)(scene_conv_3)
 
-scene_conv_4 = Conv2D(96, kernel_size=(4,3), strides=(2, 2), data_format='channels_last')(scene_3_activation)
-scene_4_activation = LeakyReLU(0.1)(scene_conv_4)
+scene_conv_4 = Conv2D(160, kernel_size=(3,3), strides=(1, 2), data_format='channels_last')(scene_3_activation)
+scene_4_activation = LeakyReLU(0.15)(scene_conv_4)
 
 scene_flat = Flatten()(scene_4_activation)
 
@@ -143,14 +146,15 @@ scene_flat = Flatten()(scene_4_activation)
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
 depth_coord_conv_input = CoordinateChannel2D(use_radius=True, data_format='channels_last')(depth_nn_input)
 
-depth_conv_1 = Conv2D(64, kernel_size=(8,8), strides=(3, 4), data_format='channels_last')(depth_coord_conv_input)
-depth_1_activation = LeakyReLU(0.1)(depth_conv_1)
+depth_conv_1 = Conv2D(64, kernel_size=(6,6), strides=(2, 3), data_format='channels_last')(depth_coord_conv_input)
+depth_1_activation = LeakyReLU(0.15)(depth_conv_1)
+depth_1_pool = MaxPooling2D(pool_size=(1,2))(depth_1_activation)
 
-depth_conv_2 = Conv2D(96, kernel_size=(5,5), strides=(2, 3), data_format='channels_last')(depth_1_activation)
-depth_2_activation = LeakyReLU(0.1)(depth_conv_2)
+depth_conv_2 = Conv2D(72, kernel_size=(4,4), strides=(2, 2), data_format='channels_last')(depth_1_pool)
+depth_2_activation = LeakyReLU(0.15)(depth_conv_2)
 
-depth_conv_3 = Conv2D(64, kernel_size=(4,4), strides=(2, 4), data_format='channels_last')(depth_2_activation)
-depth_3_activation = LeakyReLU(0.1)(depth_conv_3)
+depth_conv_3 = Conv2D(48, kernel_size=(3,3), strides=(1, 2), data_format='channels_last')(depth_2_activation)
+depth_3_activation = LeakyReLU(0.15)(depth_conv_3)
 
 depth_flat = Flatten()(depth_3_activation)
 
@@ -176,10 +180,12 @@ sensor_output = Flatten()(sensor_input)
 merge = concatenate([scene_flat, depth_flat, sensor_output])
 
 # interpretation/combination model
-# fully connected layers
+# fully connected layers - https://en.wikipedia.org/wiki/MNIST_database
+# activation function = https://ml-cheatsheet.readthedocs.io/en/latest/activation_functions.html#elu
 merged_dense_1 = Dense(512, activation='sigmoid')(merge)
 merged_dense_2 = Dense(1024, activation='sigmoid')(merged_dense_1)
-final_output = Dense(num_steering_angles, activation='linear')(merged_dense_2)
+merged_dense_3 = Dense(1536, activation='sigmoid')(merged_dense_2)
+final_output = Dense(num_steering_angles, activation='linear')(merged_dense_3)
 
 
 """ # ISSUE: RNN really only makes sense if there is a sequence of inputs;
@@ -198,9 +204,8 @@ print(model.summary())
 #plot_model(model, to_file='multi_ddqn.png')
 
 
-
 #replay_memory = SequentialMemory(limit=10**4, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
-replay_memory = SkippingMemory(limit=10000,
+replay_memory = SkippingMemory(limit=8000,
                                num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
                                skip_factor=STACK_EVERY_N_FRAMES)
 
@@ -220,28 +225,31 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 35.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 30.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
 train_every_n_steps = 4
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
-                                  enable_dueling_network=False, target_model_update=10000, # was soft update parameter?
+                                  enable_dueling_network=False, target_model_update=9000, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
                                   nb_steps_warmup=512, batch_size=16,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
                                   print_frequency=5)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
+#https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
 # lr := lr * ( 1 / (1 + (decay * iterations)))
-dqn_agent.compile(SGD(lr=0.005, decay=0.001665), metrics=['mae']) # not use mse since |reward| <= 1.0
+num_total_training_steps = 100000
+init_lr = 0.05
+lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
+dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_013019_01.h5'
+weights_filename = 'dqn_collision_avoidance_020119_02.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
-want_to_train = False
+want_to_train = True
 load_in_weights_in_weights_filename = True
-num_total_training_steps = 1000000
 if want_to_train is True:
 
   # note: interval's units are episode_steps
