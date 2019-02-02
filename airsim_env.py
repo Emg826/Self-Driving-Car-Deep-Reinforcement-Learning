@@ -38,12 +38,12 @@ class AirSimEnv(Env):
     # 1st 2 must reflect settings.json
     self.SCENE_INPUT_SHAPE = (scene_settings_md_size[0], scene_settings_md_size[1]*3)  # 1.0 / 0.4
     self.DEPTH_PLANNER_INPUT_SHAPE = (depth_settings_md_size[0], depth_settings_md_size[1]*3)  # 1.0 / 0.25
-    self.SENSOR_INPUT_SHAPE = (17,)
+    self.SENSOR_INPUT_SHAPE = (7,)
 
     self.PROXIMITY_INPUT_SHAPE = (0,)
     self.proximity_instead_of_depth_planner = proximity_instead_of_depth_planner
     if self.proximity_instead_of_depth_planner is True:
-      self.proximity_sensor = ProximitySensor(max_distance=12.0, kill_distance=3.0, num_proximity_sectors=32)
+      self.proximity_sensor = ProximitySensor(max_distance=13.0, kill_distance=3.0, num_proximity_sectors=16)
       self.PROXIMITY_INPUT_SHAPE = (self.proximity_sensor.num_proximity_sectors,)
 
     self.need_channel_dimension = need_channel_dimension
@@ -210,9 +210,9 @@ class AirSimEnv(Env):
     self.car_controls.steering = steering_angle
 
     # BEGIN TIMESTEP
+    self.client.setCarControls(self.car_controls)  # tested to see if conrols changed even if set before unpause: it does
     self.client.simPause(False)  # unpause AirSim
     sim_unpaused_start_time = time.time()  # used to track time at which sim is unpaused
-    self.client.setCarControls(self.car_controls)  # tested to see if conrols changed even if set before unpause: it does
 
     time.sleep(self.seconds_pause_between_steps)  # take this action for user specified amt of IRL seconds
 
@@ -448,27 +448,27 @@ class AirSimEnv(Env):
   def _extract_sensor_data(self, car_info):
     """
     Returns a list w/ 17 entries:
-
-    1-2. GPS (x, y) coordinates of car
+    # all x's were included at one point, but now are either unreliable or I think they are worthless
+    x-x. GPS (x, y) coordinates of car
     3. manhattan distance from end point (x, y)
     4. yaw/compass direction of car in radians  # use airsim.to_eularian_angles() to get yaw
     5. relative bearing in radians (see func)
     6. current steering angle in [-1.0, 1.0]
-    x. linear velocity (x, y) # no accurate whatsoever (press ';' in sim to see)
-    7-8. angular velocity (x, y)
-    9-10. linear acceleration (x, y)
-    11-12. angular acceleration (x, y)
+    x-x. linear velocity (x, y) # not accurate whatsoever (press ';' in sim to see)
+    x-x. angular velocity (x, y)
+    x-x. linear acceleration (x, y)
+    x-x. angular acceleration (x, y)
     13. speed
     14-15. absolute difference from current location to destination for x and y each
-    16-17. (x, y) coordinates of destination
+    x-x. (x, y) coordinates of destination
 
     Note: no z coords because city is almost entirely flat
     """
     sensor_data = np.empty(0)
 
     # 1-2 car's gps x and y coords
-    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.position.x_val)
-    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.position.y_val)
+    #sensor_data =np.append(sensor_data, car_info.kinematics_estimated.position.x_val)
+    #sensor_data =np.append(sensor_data, car_info.kinematics_estimated.position.y_val)
 
     # 3 manhattan distance til end
     sensor_data =np.append(sensor_data, self.current_distance_from_destination)
@@ -487,16 +487,16 @@ class AirSimEnv(Env):
     sensor_data =np.append(sensor_data, self.car_controls.steering)
 
     # 7 angular velocity x and y
-    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_velocity.x_val)
-    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_velocity.y_val)
+    #sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_velocity.x_val)
+    #sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_velocity.y_val)
 
     # 9
-    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.linear_acceleration.x_val)
-    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.linear_acceleration.y_val)
+    #sensor_data =np.append(sensor_data, car_info.kinematics_estimated.linear_acceleration.x_val)
+    #sensor_data =np.append(sensor_data, car_info.kinematics_estimated.linear_acceleration.y_val)
 
     # 11
-    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_acceleration.x_val)
-    sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_acceleration.y_val)
+    #sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_acceleration.x_val)
+    #sensor_data =np.append(sensor_data, car_info.kinematics_estimated.angular_acceleration.y_val)
 
     # 13
     sensor_data =np.append(sensor_data, car_info.speed)
@@ -506,8 +506,8 @@ class AirSimEnv(Env):
     sensor_data =np.append(sensor_data, abs(self.ending_coords.y_val - car_info.kinematics_estimated.position.y_val))
 
     # 16 & 17
-    sensor_data =np.append(sensor_data, self.ending_coords.x_val)
-    sensor_data =np.append(sensor_data, self.ending_coords.y_val)
+    #sensor_data =np.append(sensor_data, self.ending_coords.x_val)
+    #sensor_data =np.append(sensor_data, self.ending_coords.y_val)
 
     #print('sensor data shape', sensor_data.shape)  # for debug
     if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn

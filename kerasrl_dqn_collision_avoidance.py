@@ -39,9 +39,8 @@ from keras.models import Model
 from keras.layers import Input, Dense, Flatten, Activation, SimpleRNN, MaxPooling2D
 from keras.layers.convolutional import Conv2D
 from keras.layers.merge import concatenate
-from keras.optimizers import SGD, RMSprop, Adam
+from keras.optimizers import SGD
 from keras.layers.advanced_activations import LeakyReLU
-
 
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, EpsGreedyQPolicy
@@ -55,9 +54,6 @@ from transparent_dqn import TransparentDQNAgent
 from coord_conv import CoordinateChannel2D
 
 
-np.random.seed(7691)
-random.seed(6113)
-
 # This block solved the "CUBLAS_STATUS_ALLOC_FAILED" CUDA issue (https://stackoverflow.com/a/52762075)
 import keras.backend as K
 cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
@@ -70,13 +66,13 @@ PHI = lambda pixel: 1.0 / pixel
 # IRL seconds  #x2.0 speed: 4.5 steps per IRL second @ 0,2 wait
 need_channel_dimension = True
 concat_coord_conv_layers = True
-env = AirSimEnv(num_steering_angles=7,
+env = AirSimEnv(num_steering_angles=3,  # should be an odd number so as to include 0
                       max_num_steps_in_episode=600,
                       fraction_of_top_of_scene_to_drop=0.05,  
                       fraction_of_bottom_of_scene_to_drop=0.1,
                       fraction_of_top_of_depth_to_drop=0.4,
                       fraction_of_bottom_of_depth_to_drop=0.1,
-                      seconds_pause_between_steps=0.20,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
+                      seconds_pause_between_steps=0.30,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
                       seconds_between_collision_in_sim_and_register=0.4,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_depth_pixels=PHI,
                       need_channel_dimension=need_channel_dimension,
@@ -131,17 +127,17 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE, PROXIMITY_INPUT_
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
 scene_coord_conv_inputs = CoordinateChannel2D(use_radius=True, data_format='channels_last')(scene_nn_input)
 
-scene_conv_1 = Conv2D(128, kernel_size=(10,10), strides=(5, 5), data_format='channels_last')(scene_coord_conv_inputs)
-scene_1_activation = LeakyReLU(0.15)(scene_conv_1)
+scene_conv_1 = Conv2D(64, kernel_size=(11,11), strides=(5, 6), data_format='channels_last')(scene_coord_conv_inputs)
+scene_1_activation = LeakyReLU(0.1)(scene_conv_1)
 
-scene_conv_2 = Conv2D(256, kernel_size=(5,5), strides=(3, 3), data_format='channels_last')(scene_1_activation)
-scene_2_activation = LeakyReLU(0.15)(scene_conv_2)
+scene_conv_2 = Conv2D(96, kernel_size=(7,7), strides=(3, 4), data_format='channels_last')(scene_1_activation)
+scene_2_activation = LeakyReLU(0.1)(scene_conv_2)
 
-scene_conv_3 = Conv2D(256, kernel_size=(4,4), strides=(2 , 2), data_format='channels_last')(scene_2_activation)
-scene_3_activation = LeakyReLU(0.15)(scene_conv_3)
+scene_conv_3 = Conv2D(128, kernel_size=(4,4), strides=(2 , 2), data_format='channels_last')(scene_2_activation)
+scene_3_activation = LeakyReLU(0.1)(scene_conv_3)
 
-scene_conv_4 = Conv2D(128, kernel_size=(3,3), strides=(1, 2), data_format='channels_last')(scene_3_activation)
-scene_4_activation = LeakyReLU(0.15)(scene_conv_4)
+scene_conv_4 = Conv2D(64, kernel_size=(2,2), strides=(1, 1), data_format='channels_last')(scene_3_activation)
+scene_4_activation = LeakyReLU(0.1)(scene_conv_4)
 
 scene_flat = Flatten()(scene_4_activation)
 
@@ -160,24 +156,24 @@ x. linear velocity (x, y) # no accurate whatsoever (press ';' in sim to see)
 14-15. absolute difference from current location to destination for x and y each
 16-17. (x, y) coordinates of destination
 """
+
+proximity_input = Input(shape=PROXIMITY_INPUT_SHAPE)
+proximity_flat = Flatten()(proximity_input)
+
+
 sensor_input = Input(shape=SENSOR_INPUT_SHAPE)  # not much of a 'model', really...
 # SENSOR_INPUT_SHAPE[0] * SENSOR_INPUT_SHAPE[0]
 sensor_flat = Flatten()(sensor_input)
 
-
-proximity_input = Input(shape=PROXIMITY_INPUT_SHAPE)
-proximity_flat = Flatten()(proximity_input)
 
 merge = concatenate([scene_flat, proximity_flat, sensor_flat])
 
 # interpretation/combination model
 # fully connected layers - https://en.wikipedia.org/wiki/MNIST_database
 # activation function = https://ml-cheatsheet.readthedocs.io/en/latest/activation_functions.html#elu
-merged_dense_1 = Dense(512, activation='sigmoid')(merge)
-merged_dense_2 = Dense(1024, activation='sigmoid')(merged_dense_1)
-merged_dense_3 = Dense(2048, activation='sigmoid')(merged_dense_2)
-
-final_output = Dense(num_steering_angles, activation='linear')(merged_dense_3)
+merged_dense_1 = Dense(256, activation='sigmoid')(merge)
+merged_dense_2 = Dense(512, activation='sigmoid')(merged_dense_1)
+final_output = Dense(num_steering_angles, activation='linear')(merged_dense_2)
 
 
 """ # ISSUE: RNN really only makes sense if there is a sequence of inputs;
@@ -191,6 +187,7 @@ final_output = Dense(num_steering_angles, activation='linear')(merged_simplernn_
 model = Model(inputs=[scene_nn_input, proximity_input, sensor_input], outputs=final_output)
 # summarize layers
 print(model.summary())
+
 
 # plot network graph  - - need graphviz installed
 #plot_model(model, to_file='multi_ddqn.png')
@@ -217,7 +214,7 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 30.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 32.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
@@ -226,19 +223,19 @@ dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=9000, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=384, batch_size=16,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=128, batch_size=24,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
-                                  print_frequency=6)
+                                  print_frequency=4)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 #https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
 # lr := lr * ( 1 / (1 + (decay * iterations)))
 num_total_training_steps = 100000
-init_lr = 0.0025
+init_lr = 1e-4  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_020119_03.h5'
+weights_filename = 'dqn_collision_avoidance_020219_02.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
 want_to_train = True
 load_in_weights_in_weights_filename = True
