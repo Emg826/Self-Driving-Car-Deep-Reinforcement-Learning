@@ -9,6 +9,7 @@ import random
 import cv2
 import math
 import time
+from proximity import ProximitySensor
 
 
 class AirSimEnv(Env):
@@ -26,7 +27,8 @@ class AirSimEnv(Env):
                   seconds_pause_between_steps=0.1,  # gives rand num generator time to work (wasn't working b4)
                   seconds_between_collision_in_sim_and_register=1.0,  # note avg 4.12 steps per IRL sec on school computer
                   lambda_function_to_apply_to_depth_pixels=None,
-                  need_channel_dimension=False):
+                  need_channel_dimension=False,
+                  proximity_instead_of_depth_planner=False):
     """
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
     and the looping through the image is handled by this class. Therefore, only 1
@@ -38,6 +40,11 @@ class AirSimEnv(Env):
     self.DEPTH_PLANNER_INPUT_SHAPE = (depth_settings_md_size[0], depth_settings_md_size[1]*3)  # 1.0 / 0.25
     self.SENSOR_INPUT_SHAPE = (17,)
 
+    self.PROXIMITY_INPUT_SHAPE = (0,)
+    self.proximity_instead_of_depth_planner = proximity_instead_of_depth_planner
+    if self.proximity_instead_of_depth_planner is True:
+      self.proximity_sensor = ProximitySensor(max_distance=12.0, kill_distance=3.0, num_proximity_sectors=32)
+      self.PROXIMITY_INPUT_SHAPE = (self.proximity_sensor.num_proximity_sectors,)
 
     self.need_channel_dimension = need_channel_dimension
     # sim admin stuff
@@ -421,7 +428,18 @@ class AirSimEnv(Env):
 
     state_t2 = []
     state_t2.append(self._extract_scene_image(list_of_img_response_objects))
-    state_t2.append(self._extract_depth_planner_image(list_of_img_response_objects))
+
+    depth_planner_image = self._extract_depth_planner_image(list_of_img_response_objects)
+    if self.proximity_instead_of_depth_planner is True:
+      
+      proximities_by_sector = np.array(self.proximity_sensor.depth_planner_image_to_proximity_list(depth_planner_image))
+      if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
+        proximities_by_sector =  proximities_by_sector.reshape(proximities_by_sector.shape[0], 1)
+      state_t2.append(proximities_by_sector)
+      
+    else:
+      state_t2.append(self._transform_depth_planner_image(list_of_img_response_objects))
+                      
     state_t2.append(self._extract_sensor_data(car_info))
     #print('shape of state', np.array(state_t2).shape)  # for debug
     return state_t2  # order should be: scene img, depth img, sensor data
@@ -555,11 +573,13 @@ class AirSimEnv(Env):
     # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
     img = img[self.first_depth_planner_row_idx : self.last_depth_planner_row_idx]
 
+    return img
+    
+  def _transform_depth_planner_image(self, depth_planner_image):
     # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
-
     # note: could leave as 1d array cutoff frac_top_to_drop*height first many cols and then do multiprocessing?
     if self.PHI is not None:   # could leave a None and just skip this part (might be good idea since NN not care if look nice?)
-      img = self.PHI(img) # PHI was vectorized in __init__, so this applies PHI to each pixel in
+      depth_planner_image = self.PHI(depth_planner_image) # PHI was vectorized in __init__, so this applies PHI to each pixel in
       # image approximately 10x faster than 2-nested for-loops of applying PHI
 
     # canny edge detection - draws white-ish outlines on objects w/ distinct edges
@@ -578,9 +598,9 @@ class AirSimEnv(Env):
     #print('depth_planner img shape', img.shape)  # debug
 
     if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
-      return img.reshape(img.shape[0], img.shape[1], 1)
+      return depth_planner_image.reshape(depth_planner_image.shape[0], depth_planner_image.shape[1], 1)
     else:
-      return img.reshape(img.shape[0], img.shape[1])
+      return depth_planner_image.reshape(depth_planner_image.shape[0], depth_planner_image.shape[1])
 
 
   def _request_sim_images(self, scene=True, depth_planner=True):
@@ -609,9 +629,9 @@ class AirSimEnv(Env):
 
     :returns: nada
     """
-    left_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=-1.52, roll=0.0)
+    left_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=-1.04, roll=0.0)
     forward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
-    right_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=1.55, roll=0.0)
+    right_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=1.04, roll=0.0)
     backward_cam_orientation = airsim.to_quaternion(pitch=-0.17, yaw=0.0, roll=0.0)
 
 
@@ -721,3 +741,4 @@ class AirSimEnv(Env):
     # else do nothing since relative_bearing is already >= 0
 
     return relative_bearing
+

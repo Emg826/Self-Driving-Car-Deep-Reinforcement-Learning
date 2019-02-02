@@ -64,24 +64,25 @@ cfg = K.tf.ConfigProto(gpu_options={'allow_growth': True})
 K.set_session(K.tf.Session(config=cfg))
 
 # have to be careful not to make PHI too complex, else decr num steps per IRL second
-PHI = lambda pixel: 0.0 if pixel < 0.575 else 724.0 / pixel
+PHI = lambda pixel: 1.0 / pixel
 
 # IRL seconds # x1.0 speed: 9.4 steps per sim sec @ 0.05 wait; 7.5 spss @ 0.1; 3.7 spss @ 0.2 wait
 # IRL seconds  #x2.0 speed: 4.5 steps per IRL second @ 0,2 wait
 need_channel_dimension = True
 concat_coord_conv_layers = True
-env = AirSimEnv(num_steering_angles=5,
-                      max_num_steps_in_episode=650,
+env = AirSimEnv(num_steering_angles=7,
+                      max_num_steps_in_episode=600,
                       fraction_of_top_of_scene_to_drop=0.05,  
                       fraction_of_bottom_of_scene_to_drop=0.1,
-                      fraction_of_top_of_depth_to_drop=0.3,
-                      fraction_of_bottom_of_depth_to_drop=0.45,
+                      fraction_of_top_of_depth_to_drop=0.4,
+                      fraction_of_bottom_of_depth_to_drop=0.1,
                       seconds_pause_between_steps=0.20,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
                       seconds_between_collision_in_sim_and_register=0.4,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_depth_pixels=PHI,
                       need_channel_dimension=need_channel_dimension,
                       depth_settings_md_size=(128,128),
-                      scene_settings_md_size=(256,256))  # NN doesn't care if image looks  nice
+                      scene_settings_md_size=(256,256),
+                      proximity_instead_of_depth_planner=True)  # NN doesn't care if image looks  nice
                       # leaving ^ as None almost doubles num steps per IRL second, meaning
                       # can increase sim speed an get more done!
 
@@ -94,6 +95,7 @@ STACK_EVERY_N_FRAMES = 1  # don't change this for now
 SCENE_INPUT_SHAPE = None
 DEPTH_INPUT_SHAPE = None
 SENSOR_INPUT_SHAPE = None
+PROXIMITY_INPUT_SHAPE = None
 # split into if else because want to avoid the extra
 # (...,1) at the end messes up the dimensionality of input to NN
 # when the inputs are stacked
@@ -102,6 +104,7 @@ if NUM_FRAMES_TO_STACK_INCLUDING_CURRENT == 1:
   SCENE_INPUT_SHAPE = env.SCENE_INPUT_SHAPE + (1,)
   DEPTH_INPUT_SHAPE = env.DEPTH_PLANNER_INPUT_SHAPE + (1,)
   SENSOR_INPUT_SHAPE =  env.SENSOR_INPUT_SHAPE + (1,)
+  PROXIMITY_INPUT_SHAPE = env.PROXIMITY_INPUT_SHAPE + (1,)
 
 else:
   # 5th dimension would be the channel dimension; don't need this if Conv2D
@@ -110,13 +113,16 @@ else:
     SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (1,)
     DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE + (1,)
     SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE + (1,)
+    PROXIMITY_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.PROXIMITY_INPUT_SHAPE + (1,)
 
   else:
     SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE
     DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE
     SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE
+    SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.PROXIMITY_INPUT_SHAPE
 
-print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
+
+print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE, PROXIMITY_INPUT_SHAPE)
 
 
 # BEGIN MODEL - 
@@ -125,38 +131,19 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)
 scene_coord_conv_inputs = CoordinateChannel2D(use_radius=True, data_format='channels_last')(scene_nn_input)
 
-scene_conv_1 = Conv2D(128, kernel_size=(11,11), strides=(3, 3), data_format='channels_last')(scene_coord_conv_inputs)
+scene_conv_1 = Conv2D(128, kernel_size=(10,10), strides=(5, 5), data_format='channels_last')(scene_coord_conv_inputs)
 scene_1_activation = LeakyReLU(0.15)(scene_conv_1)
-scene_1_pool = MaxPooling2D(pool_size=2)(scene_1_activation)
 
-scene_conv_2 = Conv2D(256, kernel_size=(5,5), strides=(2, 2), data_format='channels_last')(scene_1_pool)
+scene_conv_2 = Conv2D(256, kernel_size=(5,5), strides=(3, 3), data_format='channels_last')(scene_1_activation)
 scene_2_activation = LeakyReLU(0.15)(scene_conv_2)
-scene_2_pool = MaxPooling2D(pool_size=2)(scene_2_activation)
 
-scene_conv_3 = Conv2D(256, kernel_size=(4,4), strides=(1 , 1), data_format='channels_last')(scene_2_pool)
+scene_conv_3 = Conv2D(256, kernel_size=(4,4), strides=(2 , 2), data_format='channels_last')(scene_2_activation)
 scene_3_activation = LeakyReLU(0.15)(scene_conv_3)
 
-scene_conv_4 = Conv2D(160, kernel_size=(3,3), strides=(1, 2), data_format='channels_last')(scene_3_activation)
+scene_conv_4 = Conv2D(128, kernel_size=(3,3), strides=(1, 2), data_format='channels_last')(scene_3_activation)
 scene_4_activation = LeakyReLU(0.15)(scene_conv_4)
 
 scene_flat = Flatten()(scene_4_activation)
-
-
-# not as deep as scene NN because depth not contain as much info per image
-depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
-depth_coord_conv_input = CoordinateChannel2D(use_radius=True, data_format='channels_last')(depth_nn_input)
-
-depth_conv_1 = Conv2D(64, kernel_size=(6,6), strides=(2, 3), data_format='channels_last')(depth_coord_conv_input)
-depth_1_activation = LeakyReLU(0.15)(depth_conv_1)
-depth_1_pool = MaxPooling2D(pool_size=(1,2))(depth_1_activation)
-
-depth_conv_2 = Conv2D(72, kernel_size=(4,4), strides=(2, 2), data_format='channels_last')(depth_1_pool)
-depth_2_activation = LeakyReLU(0.15)(depth_conv_2)
-
-depth_conv_3 = Conv2D(48, kernel_size=(3,3), strides=(1, 2), data_format='channels_last')(depth_2_activation)
-depth_3_activation = LeakyReLU(0.15)(depth_conv_3)
-
-depth_flat = Flatten()(depth_3_activation)
 
 # third input model - for the numeric sensor data  # 218 and 64 x 768
 """
@@ -175,16 +162,21 @@ x. linear velocity (x, y) # no accurate whatsoever (press ';' in sim to see)
 """
 sensor_input = Input(shape=SENSOR_INPUT_SHAPE)  # not much of a 'model', really...
 # SENSOR_INPUT_SHAPE[0] * SENSOR_INPUT_SHAPE[0]
-sensor_output = Flatten()(sensor_input)
+sensor_flat = Flatten()(sensor_input)
 
-merge = concatenate([scene_flat, depth_flat, sensor_output])
+
+proximity_input = Input(shape=PROXIMITY_INPUT_SHAPE)
+proximity_flat = Flatten()(proximity_input)
+
+merge = concatenate([scene_flat, proximity_flat, sensor_flat])
 
 # interpretation/combination model
 # fully connected layers - https://en.wikipedia.org/wiki/MNIST_database
 # activation function = https://ml-cheatsheet.readthedocs.io/en/latest/activation_functions.html#elu
 merged_dense_1 = Dense(512, activation='sigmoid')(merge)
 merged_dense_2 = Dense(1024, activation='sigmoid')(merged_dense_1)
-merged_dense_3 = Dense(1536, activation='sigmoid')(merged_dense_2)
+merged_dense_3 = Dense(2048, activation='sigmoid')(merged_dense_2)
+
 final_output = Dense(num_steering_angles, activation='linear')(merged_dense_3)
 
 
@@ -196,7 +188,7 @@ merged_simplernn_2 = SimpleRNN(1024, activation='tanh')(merged_simplernn_1)
 final_output = Dense(num_steering_angles, activation='linear')(merged_simplernn_2)
 """
 
-model = Model(inputs=[scene_nn_input, depth_nn_input, sensor_input], outputs=final_output)
+model = Model(inputs=[scene_nn_input, proximity_input, sensor_input], outputs=final_output)
 # summarize layers
 print(model.summary())
 
@@ -215,11 +207,11 @@ replay_memory = SkippingMemory(limit=8000,
 
 
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
-                              attr='eps',
-                              value_max=1.0, # start off 100% random
-                              value_min=0.10,  # get to random action x% of time
-                              value_test=0.01,  # MUST BE >0 else, for whatever reason, won't get random start
-                              nb_steps=100000) # of time steps to go from epsilon=value_max to =value_min
+                                        attr='eps',
+                                        value_max=1.0, # start off 100% random
+                                        value_min=0.10,  # get to random action x% of time
+                                        value_test=0.01,  # MUST BE >0 else, for whatever reason, won't get random start
+                                        nb_steps=50000) # of time steps to go from epsilon=value_max to =value_min
 
 
 multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
@@ -234,19 +226,19 @@ dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=9000, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=512, batch_size=16,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=384, batch_size=16,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
-                                  print_frequency=5)
+                                  print_frequency=6)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 #https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
 # lr := lr * ( 1 / (1 + (decay * iterations)))
 num_total_training_steps = 100000
-init_lr = 0.05
+init_lr = 0.0025
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_020119_02.h5'
+weights_filename = 'dqn_collision_avoidance_020119_03.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
 want_to_train = True
 load_in_weights_in_weights_filename = True
@@ -265,7 +257,7 @@ if want_to_train is True:
   dqn_agent.fit(env, callbacks=callbacks_list, nb_steps=num_total_training_steps,
                       visualize=False, verbose=False)
   
-  if env.total_num_steps > 5000:
+  if env.total_num_steps > 7000:
     dqn_agent.memory.write_transitions_to_file()
     
   dqn_agent.save_weights(weights_filename)
