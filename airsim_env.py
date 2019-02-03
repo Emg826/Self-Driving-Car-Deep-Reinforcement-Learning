@@ -28,7 +28,8 @@ class AirSimEnv(Env):
                   seconds_between_collision_in_sim_and_register=1.0,  # note avg 4.12 steps per IRL sec on school computer
                   lambda_function_to_apply_to_depth_pixels=None,
                   need_channel_dimension=False,
-                  proximity_instead_of_depth_planner=False):
+                  proximity_instead_of_depth_planner=False,
+                  concat_x_y_coords_to_channel_dim=False):
     """
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
     and the looping through the image is handled by this class. Therefore, only 1
@@ -47,6 +48,11 @@ class AirSimEnv(Env):
       self.PROXIMITY_INPUT_SHAPE = (self.proximity_sensor.num_proximity_sectors,)
 
     self.need_channel_dimension = need_channel_dimension
+    self.concat_x_y_coords_to_channel_dim  = concat_x_y_coords_to_channel_dim
+
+    if self.concat_x_y_coords_to_channel_dim is True:
+      assert self.need_channel_dimension == True
+
     # sim admin stuff
     self.seconds_pause_between_steps = seconds_pause_between_steps
     self.seconds_between_collision_in_sim_and_register = seconds_between_collision_in_sim_and_register
@@ -168,10 +174,10 @@ class AirSimEnv(Env):
     self.ending_coords = airsim.Vector3r(122.288, 12.283, -1.0)  # appx 298 m from start; mostly straight
     """
 
-    self.beginning_coords = airsim.Pose(airsim.Vector3r(30.977, -477.728, -0.65),  # safe
-                                                  airsim.Quaternionr(0.0,0.0, 0.007, 1.000))
+    self.beginning_coords = airsim.Pose(airsim.Vector3r(-758.236, -172.518, -0.66),  # safe
+                                                  airsim.Quaternionr(0.0,0.0, -0.723, 0.691))
     #self.ending_coords = airsim.Vector3r(109.694, -396.685, -1.0)  # appx 298 m from start; mostly straight
-    self.ending_coords = airsim.Vector3r(62.549, -192.0, -1.0)  # appx 298 m from start; mostly straight
+    self.ending_coords = airsim.Vector3r(-702.551, -228.107, -1.0)  # appx 298 m from start; mostly straight
 
     # units are meters
     self.ending_circle_radius = 10.0 # if car in circle w/ this radius, then car has arrived @ destination
@@ -264,7 +270,7 @@ class AirSimEnv(Env):
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
        car_info.speed > 17.0 or \
        self.collisions_in_a_row > self.max_acceptable_collisions_in_a_row or \
-       car_info.kinematics_estimated.position.z_val < -0.70: # if on sidewalk
+       car_info.kinematics_estimated.position.z_val < -0.692: # if on sidewalk
       done = True
       reward = -1.0
 
@@ -293,11 +299,11 @@ class AirSimEnv(Env):
     self.client.simPause(True)
     time.sleep(1)
 
+    print('So far: {} steps over {} episodes'.format(self.total_num_steps, self.total_num_episodes))
 
     self.total_num_episodes += 1
     self.total_num_steps += self.episode_step_count
 
-    print('So far: {} steps over {} episodes'.format(self.total_num_steps, self.total_num_episodes))
     self.episode_step_count = 0
     self.collisions_in_a_row = 0
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
@@ -356,9 +362,6 @@ class AirSimEnv(Env):
 
     # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
     if (self.total_distance_to_destination - self.current_distance_from_destination) <  50.0 and self.episode_step_count > 100:
-      reward = -1.0
-
-    elif car_info.kinematics_estimated.position.z_val < -0.70:
       reward = -1.0
 
     elif sec_since_last_collision < self.seconds_between_collision_in_sim_and_register and collision_info.time_stamp != 0.0:  # irl seconds
@@ -427,18 +430,19 @@ class AirSimEnv(Env):
     """
 
     state_t2 = []
-    state_t2.append(self._extract_scene_image(list_of_img_response_objects))
+    scene_image = self._extract_scene_image(list_of_img_response_objects)
+    
+    state_t2.append(self._transform_scene_image(scene_image))
 
     depth_planner_image = self._extract_depth_planner_image(list_of_img_response_objects)
     if self.proximity_instead_of_depth_planner is True:
-      
       proximities_by_sector = np.array(self.proximity_sensor.depth_planner_image_to_proximity_list(depth_planner_image))
       if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
         proximities_by_sector =  proximities_by_sector.reshape(proximities_by_sector.shape[0], 1)
       state_t2.append(proximities_by_sector)
       
     else:
-      state_t2.append(self._transform_depth_planner_image(list_of_img_response_objects))
+      state_t2.append(self._transform_depth_planner_image(depth_planner_image))
                       
     state_t2.append(self._extract_sensor_data(car_info))
     #print('shape of state', np.array(state_t2).shape)  # for debug
@@ -529,11 +533,15 @@ class AirSimEnv(Env):
                                                                 img_response_obj.width,
                                                                 4) for img_response_obj in scene_img_responses],
                          axis=1)
+      
+    return img
 
+
+  def _transform_scene_image(self, img):
     # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
-    img = img[self.first_scene_row_idx : self.last_scene_row_idx]
-
-
+    if self.first_scene_row_idx != 0 or self.last_scene_row_idx != self.SCENE_INPUT_SHAPE[0]:
+      img = img[self.first_scene_row_idx : self.last_scene_row_idx]
+    
     # make grayscale since not need faster training more so than colors for now
     img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)  # not instant to do, but should help training
 
@@ -541,9 +549,13 @@ class AirSimEnv(Env):
 
     # for debugging and getting cameras correct
     #cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
+    
 
     if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
-      return img.reshape(img.shape[0], img.shape[1], 1)
+      img =  img.reshape(img.shape[0], img.shape[1], 1)
+
+    if self.concat_x_y_coords_to_channel_dim is True:
+      return self.concat_x_y_coords(img)
     else:
       return img
 
@@ -569,17 +581,19 @@ class AirSimEnv(Env):
                                                         depth_planner_img_response_obj.height) \
                           for depth_planner_img_response_obj in depth_planner_img_responses],
                           axis=1)
-
-    # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
-    img = img[self.first_depth_planner_row_idx : self.last_depth_planner_row_idx]
-
     return img
+
     
-  def _transform_depth_planner_image(self, depth_planner_image):
+  def _transform_depth_planner_image(self, img):
+    # chop off unwanted top and bottom of image (mostly deadspace or where too much white)
+    if self.first_depth_planner_row_idx != 0 or self.last_depth_planner_row_idx != self.DEPTH_PLANNER_INPUT_SHAPE[0]:
+      img = img[self.first_depth_planner_row_idx : self.last_depth_planner_row_idx]
+
+    
     # apply PHI to each pixel - can only do if 2 dimension, i.e. grayscale
     # note: could leave as 1d array cutoff frac_top_to_drop*height first many cols and then do multiprocessing?
     if self.PHI is not None:   # could leave a None and just skip this part (might be good idea since NN not care if look nice?)
-      depth_planner_image = self.PHI(depth_planner_image) # PHI was vectorized in __init__, so this applies PHI to each pixel in
+      img = self.PHI(img) # PHI was vectorized in __init__, so this applies PHI to each pixel in
       # image approximately 10x faster than 2-nested for-loops of applying PHI
 
     # canny edge detection - draws white-ish outlines on objects w/ distinct edges
@@ -598,9 +612,12 @@ class AirSimEnv(Env):
     #print('depth_planner img shape', img.shape)  # debug
 
     if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
-      return depth_planner_image.reshape(depth_planner_image.shape[0], depth_planner_image.shape[1], 1)
+      img = img.reshape(img.shape[0], img.shape[1], 1)
+
+    if self.concat_x_y_coords_to_channel_dim is True:
+      return self.concat_x_y_coords(img)
     else:
-      return depth_planner_image.reshape(depth_planner_image.shape[0], depth_planner_image.shape[1])
+      return img
 
 
   def _request_sim_images(self, scene=True, depth_planner=True):
@@ -741,4 +758,27 @@ class AirSimEnv(Env):
     # else do nothing since relative_bearing is already >= 0
 
     return relative_bearing
+
+  def concat_x_y_coords(self, img):
+    """
+    Concat 2 channels beind the first: one with the x coordinate of the given pixel
+    and another with the y coordinate of the given pixel. Note: this is really
+    only for when you can't use the Keras layer to do this.
+    """
+    img_h = img.shape[0]
+    img_w = img.shape[1]
+
+    # get img_w evenly spaced real numbers in interval [-1, 1], one for each column in img
+    x_coords_of_any_given_pixel_in_any_given_row = np.linspace(start=-1.0, stop=1.0, num=img_w, endpoint=True)
+    
+    # get img_h evenly spaced real numbers in interval [-1, 1], one for each row in img
+    y_coords_of_any_given_pixel_in_any_given_row = np.linspace(start=-1.0, stop=1.0, num=img_h, endpoint=True)
+
+    img = np.concatenate([img,
+                            x_coords_of_any_given_pixel_in_any_given_row.repeat(img_h).reshape(img.shape),
+                            y_coords_of_any_given_pixel_in_any_given_row.repeat(img_w).reshape(img.shape)], axis=-1)
+    
+    #print(img.shape)  # for debug - should see channels be 3 rather than 1
+    return img
+
 
