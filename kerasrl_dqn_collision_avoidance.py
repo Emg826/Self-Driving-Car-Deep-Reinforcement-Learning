@@ -3,7 +3,33 @@
 """https://github.com/Kjell-K/AirGym/blob/master/DQN-Train.py"""
 """https://stackoverflow.com/questions/34716454/where-do-i-call-the-batchnormalization-function-in-keras"""
 
-""" Copy and paste this into your settings.json (which hould be in your Documents folder)
+""" Copy and paste one of these into your settings.json (which hould be in your Documents folder)
+{
+  "SettingsVersion": 1.2,
+  "SimMode": "Car",
+  "RpcEnabled": true,
+  "ViewMode": "NoDisplay",
+  "EngineSound": false,
+  "ClockSpeed": 1.0,
+  "CameraDefaults": {
+    "CaptureSettings": [{
+      "ImageType": 0,
+      "Width": 128,
+      "Height": 128,
+      "FOV_Degrees": 90
+    },
+    {
+      "ImageType": 1,
+      "Width": 96,
+      "Height": 96,
+      "FOV_Degrees": 90
+    }]
+  }           
+}
+
+
+
+OR
 
 {
   "SettingsVersion": 1.2,
@@ -27,7 +53,6 @@
     }]
   }           
 }
-
 """
 
 import numpy as np
@@ -211,44 +236,44 @@ print(model.summary())
 #plot_model(model, to_file='multi_ddqn.png')
 
 
-#replay_memory = SequentialMemory(limit=10**4, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
-replay_memory = SkippingMemory(limit=8000,
-                               num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
-                               skip_factor=STACK_EVERY_N_FRAMES)
+replay_memory = SequentialMemory(limit=8000, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
+#replay_memory = SkippingMemory(limit=8000,
+#                               num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
+#                               skip_factor=STACK_EVERY_N_FRAMES)
 
 # something like: w/ probability epsilon (which decays through training),
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
 
-num_total_training_steps = 50000
+num_total_training_steps = 65000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
-                                        value_max=0.95, # start off 100% random
-                                        value_min=0.10,  # get to random action x% of time
-                                        value_test=0.01,  # MUST BE >0 else, for whatever reason, won't get random start
+                                        value_max=0.20, # start off 100% random
+                                        value_min=0.05,  # get to random action x% of time
+                                        value_test=0.001,  # MUST BE >0 else, for whatever reason, won't get random start
                                         nb_steps=num_total_training_steps) # of time steps to go from epsilon=value_max to =value_min
 
 
 multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 26.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 38.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
-train_every_n_steps = 5
+train_every_n_steps = 7
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=9000, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
                                   nb_steps_warmup=256, batch_size=10,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
-                                  print_frequency=4)
+                                  print_frequency=7)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 #https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
 # lr := lr * ( 1 / (1 + (decay * iterations)))
-init_lr = 1e-4  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
+init_lr = 5e-6  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
@@ -272,7 +297,8 @@ if want_to_train is True:
                       visualize=False, verbose=False)
   
   if env.total_num_steps > 20000:
-    dqn_agent.memory.write_transitions_to_file()
+    #dqn_agent.memory.write_transitions_to_file()
+    2==2
     
   dqn_agent.save_weights(weights_filename)
 else: # else want to test

@@ -87,7 +87,7 @@ class AirSimEnv(Env):
     # steering stuff
     self.action_space = spaces.Discrete(num_steering_angles)
     self.action_space_steering = np.linspace(-1.0, 1.0, num_steering_angles).tolist()
-    self.car_controls = airsim.CarControls(throttle=0.50,
+    self.car_controls = airsim.CarControls(throttle=0.45,
                                                        steering=0.0,
                                                        is_manual_gear=True,
                                                        manual_gear=1)  # should constrain speed to < 18ish mph
@@ -372,7 +372,7 @@ class AirSimEnv(Env):
     elif (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0) or \
          (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
       self.distance_since_last_collision = 0.0
-      reward = -0.07
+      reward = -0.02
 
     else:
       """
@@ -412,7 +412,7 @@ class AirSimEnv(Env):
       distance_reward =  self.current_distance_travelled_towards_destination / self.total_distance_to_destination
 
       #reward = time_reward + distance_reward
-      reward = max(0, distance_reward - 0.02)  # don't reward until get sufficiently far out - should help avoid driving in circles
+      reward = max(0, distance_reward - 0.01)  # don't reward until get sufficiently far out - should help avoid driving in circles
 
     # for debug
     #print('reward', reward)  # debug (don't want in training since stdout takes time)
