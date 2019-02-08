@@ -52,8 +52,8 @@ final_output = Dense(NUM_STEERING_ANGLES, activation='linear')(merged_simplernn_
 model = Model(inputs=[scene_nn_input], outputs=final_output)
 print(model.summary())
 
-init_lr = 1e-2  # lr 1e-2 for 5 epochs  - 1e-3 w/ added momentum=.9
-lr_decay_factor = 1e-8
+init_lr = 1e-3  # lr 1e-2 for 5 epochs  - 1e-3 w/ added momentum=.9
+lr_decay_factor = 1e-12
 model.compile(SGD(lr=init_lr, decay=lr_decay_factor,  momentum=0.9), loss='categorical_crossentropy', metrics=['accuracy'])
 
 model.load_weights('scene_only_imitation_learning_model_1549643762.h5')
