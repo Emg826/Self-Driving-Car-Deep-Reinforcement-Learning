@@ -26,7 +26,7 @@ class AirSimILDataCollectorAPI:
   """
   def __init__(self, num_steering_angles=7):
     self.num_steering_angles = num_steering_angles
-    self.steering_angles = np.linspace(-1.0, 1.0, self.num_steering_angles).tolist()
+    self.steering_angles = np.linspace(-1.0, 1.0, self.num_steering_angles)
 
 
     self.client = airsim.CarClient()
@@ -71,11 +71,11 @@ class AirSimILDataCollectorAPI:
                                                             compress=False) ]
 
     # units are meters
-    self.beginning_coords = airsim.Pose(airsim.Vector3r(-758.236, -172.518, -0.66),  # safe
+    self.beginning_coords = airsim.Pose(airsim.Vector3r(-756.236, -172.518, -0.66),  # safe
                                         airsim.Quaternionr(0.0,0.0, -0.723, 0.691))
-    self.current_coords = self.current_coords.position
+    self.current_coords = self.beginning_coords.position
     self.ending_coords = airsim.Vector3r(-702.551, -228.107, -1.0)  # appx 298 m from start; mostly straight
-    self.ending_circle_radius = 25.0 # if car in circle w/ this radius, then car has arrived @ destination
+    self.ending_circle_radius = 15.0 # if car in circle w/ this radius, then car has arrived @ destination
 
     self.total_distance_to_destination = self._manhattan_distance(self.ending_coords.x_val,
                                                                   self.beginning_coords.position.x_val,
@@ -90,6 +90,7 @@ class AirSimILDataCollectorAPI:
     self.num_steering_angles steering angles.
     """
     steering_angle = self.steering_angles[steering_number]
+    print('setting steering angle to {}'.format(steering_angle))
     self.car_controls.steering = steering_angle
     self.client.setCarControls(self.car_controls)  # tested to see if conrols changed even if set before unpause: it does
 
