@@ -415,7 +415,9 @@ class AirSimEnv(Env):
       reward = max(0, distance_reward - 0.01)  # don't reward until get sufficiently far out - should help avoid driving in circles
 
     # for debug
-    #print('reward', reward)  # debug (don't want in training since stdout takes time)
+    if self.episode_step_count % 7 == 0: 
+      print('reward', reward)  # debug (don't want in training since stdout takes time)
+      2 == 2
     return reward
 
 

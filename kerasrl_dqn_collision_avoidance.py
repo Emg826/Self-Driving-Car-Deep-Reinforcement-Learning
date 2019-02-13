@@ -245,7 +245,7 @@ replay_memory = SequentialMemory(limit=8000, window_length=NUM_FRAMES_TO_STACK_I
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
 
-num_total_training_steps = 65000
+num_total_training_steps = 1000000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
                                         value_max=0.20, # start off 100% random
@@ -268,7 +268,7 @@ dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
                                   nb_steps_warmup=256, batch_size=10,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
-                                  print_frequency=7)
+                                  print_frequency=1)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 #https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
@@ -279,7 +279,7 @@ dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not
 
 weights_filename = 'dqn_collision_avoidance_020319_01.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
-want_to_train = True
+want_to_train = False
 load_in_weights_in_weights_filename = True
 if want_to_train is True:
 
@@ -303,4 +303,4 @@ if want_to_train is True:
   dqn_agent.save_weights(weights_filename)
 else: # else want to test
     dqn_agent.load_weights(weights_filename)
-    dqn_agent.test(env, nb_episodes=10, visualize=False)
+    dqn_agent.test(env, nb_episodes=20, visualize=False)
