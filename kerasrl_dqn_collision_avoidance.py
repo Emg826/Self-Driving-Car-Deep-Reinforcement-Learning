@@ -62,7 +62,7 @@ import math
 #from keras.utils import plot_model
 from keras.models import Model
 from keras.layers import Input, Dense, Flatten, Activation, SimpleRNN, MaxPooling2D,Reshape
-from keras.layers.convolutional import Conv2D
+from keras.layers.convolutional import Conv2D, Conv3D
 from keras.layers.convolutional_recurrent import ConvLSTM2D
 from keras.layers.merge import concatenate
 from keras.optimizers import SGD
@@ -93,13 +93,13 @@ PHI = lambda pixel: 1.0 / (pixel+1.0)
 need_channel_dimension = True
 concat_x_y_channels = True
 env = AirSimEnv(num_steering_angles=7,  # should be an odd number so as to include 0
-                      max_num_steps_in_episode=600,
+                      max_num_steps_in_episode=1000,
                       fraction_of_top_of_scene_to_drop=0.0,  # leaving these as 0 so as to keep square images
                       fraction_of_bottom_of_scene_to_drop=0.0,
                       fraction_of_top_of_depth_to_drop=0.0,
                       fraction_of_bottom_of_depth_to_drop=0.0,
-                      seconds_pause_between_steps=0.25,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
-                      seconds_between_collision_in_sim_and_register=0.4,  # note avg 4.12 steps per IRL sec on school computer
+                      seconds_pause_between_steps=0.3,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
+                      seconds_between_collision_in_sim_and_register=0.2,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_depth_pixels=PHI,
                       need_channel_dimension=need_channel_dimension,
                       depth_settings_md_size=(96,96),
@@ -160,13 +160,13 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE, PROXIMITY_INPUT_
 # BEGIN MODEL - 
 #first input model - height, width, num_channels (gray, so only 1 channel)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)  # strid h, w
-scene_conv_1 = ConvLSTM2D(32, kernel_size=(8, 8), strides=(4, 4), data_format='channels_last', return_sequences=True)(scene_nn_input)
+scene_conv_1 = Conv3D(32, kernel_size=(1, 8, 8), strides=(1, 4, 4), data_format='channels_last')(scene_nn_input)
 scene_1_activation = LeakyReLU()(scene_conv_1)
 
-scene_conv_2 = ConvLSTM2D(64, kernel_size=(4, 4), strides=(2, 2), data_format='channels_last', return_sequences=True)(scene_1_activation)
+scene_conv_2 = Conv3D(64, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_1_activation)
 scene_2_activation = LeakyReLU()(scene_conv_2)
 
-scene_conv_3 = ConvLSTM2D(32, kernel_size=(4, 4), strides=(2, 2), data_format='channels_last', return_sequences=True)(scene_2_activation)
+scene_conv_3 = Conv3D(32, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_2_activation)
 scene_3_activation = LeakyReLU()(scene_conv_3)
 
 #scene_flat = Flatten()(scene_4_activation)
@@ -178,10 +178,10 @@ scene_reshaped = Reshape(target_shape=(NUM_FRAMES_TO_STACK_INCLUDING_CURRENT, ou
 # not as deep as scene NN because depth not contain as much info per image
 depth_nn_input = Input(shape=DEPTH_INPUT_SHAPE)
 
-depth_conv_1 = ConvLSTM2D(16, kernel_size=(8,8), strides=(4,4), data_format='channels_last', return_sequences=True)(depth_nn_input)
+depth_conv_1 = Conv3D(16, kernel_size=(1, 8 ,8), strides=(1, 4,4), data_format='channels_last')(depth_nn_input)
 depth_1_activation = LeakyReLU()(depth_conv_1)
 
-depth_conv_2 = ConvLSTM2D(32, kernel_size=(6,6), strides=(3,3), data_format='channels_last', return_sequences=True)(depth_1_activation)
+depth_conv_2 = Conv3D(32, kernel_size=(1, 6, 6), strides=(1, 3, 3), data_format='channels_last')(depth_1_activation)
 depth_2_activation = LeakyReLU()(depth_conv_2)
 
 #depth_flat = Flatten()(depth_3_activation)
@@ -205,19 +205,17 @@ x. linear velocity (x, y) # no accurate whatsoever (press ';' in sim to see)
 16-17. (x, y) coordinates of destination
 """
 sensor_input = Input(shape=SENSOR_INPUT_SHAPE)  # not much of a 'model', really...
+print(sensor_input._keras_shape)
 sensor_reshaped = Reshape(target_shape=(sensor_input._keras_shape[1], sensor_input._keras_shape[2]))(sensor_input)
 # SENSOR_INPUT_SHAPE[0] * SENSOR_INPUT_SHAPE[0]
 #sensor_output = Flatten()(sensor_input)
 
 merge = concatenate([scene_reshaped, depth_reshaped, sensor_reshaped])
+merge = Reshape(target_shape=( merge._keras_shape[1], merge._keras_shape[2]) )(merge)
 
-# interpretation/combination model
-# fully connected layers
-"""
-merged_dense_1 = Dense(384, activation='sigmoid')(merge)
-merged_dense_2 = Dense(512, activation='sigmoid')(merged_dense_1)
-final_output = Dense(num_steering_angles, activation='linear')(merged_dense_2)
-"""
+print(merge._keras_shape)
+
+
 
 # ISSUE: RNN really only makes sense if there is a sequence of inputs;
 # however, CNN's filters will scan all N stacked frames @ once: ie it will
@@ -236,7 +234,7 @@ print(model.summary())
 #plot_model(model, to_file='multi_ddqn.png')
 
 
-replay_memory = SequentialMemory(limit=8000, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
+replay_memory = SequentialMemory(limit=7500, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
 #replay_memory = SkippingMemory(limit=8000,
 #                               num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
 #                               skip_factor=STACK_EVERY_N_FRAMES)
@@ -245,13 +243,13 @@ replay_memory = SequentialMemory(limit=8000, window_length=NUM_FRAMES_TO_STACK_I
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
 
-num_total_training_steps = 1000000
+num_total_training_steps = 3000000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
-                                        value_max=0.20, # start off 100% random
+                                        value_max=1.0, # start off 100% random
                                         value_min=0.05,  # get to random action x% of time
                                         value_test=0.001,  # MUST BE >0 else, for whatever reason, won't get random start
-                                        nb_steps=num_total_training_steps) # of time steps to go from epsilon=value_max to =value_min
+                                        nb_steps=1000000) # of time steps to go from epsilon=value_max to =value_min
 
 
 multi_input_processor = MultiInputProcessor(num_inputs=3, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
@@ -264,11 +262,11 @@ discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discou
 train_every_n_steps = 7
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
-                                  enable_dueling_network=False, target_model_update=9000, # was soft update parameter?
+                                  enable_dueling_network=False, target_model_update=10000, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=256, batch_size=10,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=1024, batch_size=11,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
-                                  print_frequency=1)
+                                  print_frequency=17)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 #https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
@@ -277,9 +275,9 @@ init_lr = 5e-6  # lr was too high and caused weights to go to NaN --> output NaN
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_020319_01.h5'
+weights_filename = 'dqn_collision_avoidance_021319_02.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
-want_to_train = False
+want_to_train = True
 load_in_weights_in_weights_filename = True
 if want_to_train is True:
 

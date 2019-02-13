@@ -193,6 +193,7 @@ class AirSimEnv(Env):
     self.episode_time_in_irl_seconds = 0.0  # only used for debug and steps/second measurement,
     # not for tracking progress in sim; note: sim steps per real life seconds is ~6
 
+    self.previous_reward = 0.0   # see _get_reward -- is reset to 0.0 upon call reset(self)
     print('The car will need to travel {} simulation meters to arrive at the destination'.format(self.total_distance_to_destination))
 
 
@@ -304,6 +305,8 @@ class AirSimEnv(Env):
     self.total_num_episodes += 1
     self.total_num_steps += self.episode_step_count
 
+    self.previous_reward = 0.0
+
     self.episode_step_count = 0
     self.collisions_in_a_row = 0
     self.obj_id_of_last_collision = -123456789 # any int < -1 is ok
@@ -372,7 +375,7 @@ class AirSimEnv(Env):
     elif (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0) or \
          (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
       self.distance_since_last_collision = 0.0
-      reward = -0.02
+      reward = -0.05
 
     else:
       """
@@ -412,12 +415,19 @@ class AirSimEnv(Env):
       distance_reward =  self.current_distance_travelled_towards_destination / self.total_distance_to_destination
 
       #reward = time_reward + distance_reward
-      reward = max(0, distance_reward - 0.01)  # don't reward until get sufficiently far out - should help avoid driving in circles
+      reward = max(0, distance_reward - 0.015)  # don't reward until get sufficiently far out - should help avoid driving in circles
 
+      # i'm concerned that there is an issue with the road curving away from the destination
+      # and the car not wanting to suffer a less (but still) positive reward
+      if reward < self.previous_reward and self.current_distance_travelled_towards_destination > 25.0:
+        reward = self.previous_reward
+        
     # for debug
-    if self.episode_step_count % 7 == 0: 
+    if self.episode_step_count % 17 == 0: 
       print('reward', reward)  # debug (don't want in training since stdout takes time)
       2 == 2
+
+    self.previous_reward = reward
     return reward
 
 
