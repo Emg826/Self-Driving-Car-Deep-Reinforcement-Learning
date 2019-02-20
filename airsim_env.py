@@ -24,7 +24,7 @@ class AirSimEnv(Env):
                   fraction_of_bottom_of_scene_to_drop=0.0,
                   fraction_of_top_of_depth_to_drop=0.0,
                   fraction_of_bottom_of_depth_to_drop=0.0,
-                  seconds_pause_between_steps=0.1,  # gives rand num generator time to work (wasn't working b4)
+                  seconds_pause_between_steps=0.4,  # gives rand num generator time to work (wasn't working b4)
                   seconds_between_collision_in_sim_and_register=1.0,  # note avg 4.12 steps per IRL sec on school computer
                   lambda_function_to_apply_to_depth_pixels=None,
                   need_channel_dimension=False,
@@ -99,7 +99,7 @@ class AirSimEnv(Env):
 
     # collision info for emergency resets and reward func calc
     self.collisions_in_a_row = 0
-    self.max_acceptable_collisions_in_a_row = 3 # note: if stuck, then collisions will keep piling on
+    self.max_acceptable_collisions_in_a_row = 6 # note: if stuck, then collisions will keep piling on
     # also collisions being stuck can cause glitch through map
 
     self.obj_id_of_last_collision = -123456789  # anything <-1 is unassociated w/ an obj in sim (afaik)
@@ -263,6 +263,8 @@ class AirSimEnv(Env):
         self.collisions_in_a_row = 1
       self.obj_id_of_last_collision = collision_info.object_id
 
+
+
     # done if episode timer runs out (1) OR if fallen into oblilvion (2)
     # OR if spinning out of control (3) OR if knocked into the stratosphere (4)
     done = False
@@ -271,9 +273,16 @@ class AirSimEnv(Env):
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
        car_info.speed > 17.0 or \
        self.collisions_in_a_row > self.max_acceptable_collisions_in_a_row or \
-       car_info.kinematics_estimated.position.z_val < -0.692: # if on sidewalk
+       car_info.kinematics_estimated.position.z_val < -2.0: # if on sidewalk
       done = True
-      reward = -1.0
+      reward_t = -10.0
+
+
+    if  car_info.kinematics_estimated.position.z_val < -0.698:
+      self.collisions_in_a_row = self.max_acceptable_collisions_in_a_row - 1
+      reward_t = -1.0
+      
+
 
     self.episode_step_count += 1
 
@@ -285,8 +294,9 @@ class AirSimEnv(Env):
     # check if made it to w/in the radius of the destination area/circle
     if self._arrived_at_destination(car_info):
       done = True
-      reward = 10.0
+      reward_t = 10.0
 
+    print(reward_t)
     return state_t2, reward_t, done, {}
 
 
@@ -560,7 +570,8 @@ class AirSimEnv(Env):
     #print('scene img shape', img.shape)  # debug
 
     # for debugging and getting cameras correct
-    #cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
+    #if self.episode_step_count % 7 == 0:
+    #  cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
     
 
     if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
