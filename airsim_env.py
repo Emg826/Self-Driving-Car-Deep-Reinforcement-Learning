@@ -29,7 +29,8 @@ class AirSimEnv(Env):
                   lambda_function_to_apply_to_depth_pixels=None,
                   need_channel_dimension=False,
                   proximity_instead_of_depth_planner=False,
-                  concat_x_y_coords_to_channel_dim=False):
+                  concat_x_y_coords_to_channel_dim=False,
+                  convert_scene_to_grayscale=False):
     """
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
     and the looping through the image is handled by this class. Therefore, only 1
@@ -37,8 +38,13 @@ class AirSimEnv(Env):
     a do nothing function.
     """
     # 1st 2 must reflect settings.json
-    self.SCENE_INPUT_SHAPE = (scene_settings_md_size[0], scene_settings_md_size[1]*3)  # 1.0 / 0.4
-    self.DEPTH_PLANNER_INPUT_SHAPE = (depth_settings_md_size[0], depth_settings_md_size[1]*3)  # 1.0 / 0.25
+    self.convert_scene_to_grayscale = convert_scene_to_grayscale
+    if convert_scene_to_grayscale:
+      self.SCENE_INPUT_SHAPE = (scene_settings_md_size[0], scene_settings_md_size[1]*3)  
+    else:
+      self.SCENE_INPUT_SHAPE = (scene_settings_md_size[0], scene_settings_md_size[1]*3, 3)  
+      
+    self.DEPTH_PLANNER_INPUT_SHAPE = (depth_settings_md_size[0], depth_settings_md_size[1]*3) 
     self.SENSOR_INPUT_SHAPE = (7,)
 
     self.PROXIMITY_INPUT_SHAPE = (0,)
@@ -269,7 +275,7 @@ class AirSimEnv(Env):
     # OR if spinning out of control (3) OR if knocked into the stratosphere (4)
     done = False
     if self.episode_step_count >  self.steps_per_episode or \
-       car_info.kinematics_estimated.position.z_val > -0.55 or \
+       car_info.kinematics_estimated.position.z_val > -0.58 or \
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
        car_info.speed > 17.0 or \
        self.collisions_in_a_row > self.max_acceptable_collisions_in_a_row or \
@@ -565,17 +571,20 @@ class AirSimEnv(Env):
       img = img[self.first_scene_row_idx : self.last_scene_row_idx]
     
     # make grayscale since not need faster training more so than colors for now
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)  # not instant to do, but should help training
+    if self.convert_scene_to_grayscale:
+      img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)  # not instant to do, but should help training
+    else:
+      img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)  # https://stackoverflow.com/questions/36872379/how-to-remove-4th-channel-from-png-images
 
     #print('scene img shape', img.shape)  # debug
 
     # for debugging and getting cameras correct
     #if self.episode_step_count % 7 == 0:
     #  cv2.imwrite('scene_{}.jpg'.format(time.time()), img)
-    
 
     if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
-      img =  img.reshape(img.shape[0], img.shape[1], 1)
+      if self.convert_scene_to_grayscale:   # if need channel dimension but is in gray scale...
+        img =  img.reshape(img.shape[0], img.shape[1], 1)
 
     if self.concat_x_y_coords_to_channel_dim is True:
       return self.concat_x_y_coords(img)
@@ -797,10 +806,15 @@ class AirSimEnv(Env):
     # get img_h evenly spaced real numbers in interval [-1, 1], one for each row in img
     y_coords_of_any_given_pixel_in_any_given_row = np.linspace(start=-1.0, stop=1.0, num=img_h, endpoint=True)
 
-    img = np.concatenate([img,
-                            x_coords_of_any_given_pixel_in_any_given_row.repeat(img_h).reshape(img.shape),
-                            y_coords_of_any_given_pixel_in_any_given_row.repeat(img_w).reshape(img.shape)], axis=-1)
-    
+    if self.convert_scene_to_grayscale:
+      img = np.concatenate([img,
+                              x_coords_of_any_given_pixel_in_any_given_row.repeat(img_h).reshape(img.shape),
+                              y_coords_of_any_given_pixel_in_any_given_row.repeat(img_w).reshape(img.shape)], axis=-1)
+    else:
+      img = np.concatenate([img,
+                              x_coords_of_any_given_pixel_in_any_given_row.repeat(img_h).reshape((img_h, img_w, 1)),
+                              y_coords_of_any_given_pixel_in_any_given_row.repeat(img_w).reshape((img_h, img_w, 1))], axis=-1)
+      
     #print(img.shape)  # for debug - should see channels be 3 rather than 1
     return img
 

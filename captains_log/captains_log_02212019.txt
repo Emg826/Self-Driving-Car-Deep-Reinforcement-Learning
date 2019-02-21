@@ -1,0 +1,3 @@
+1046am. So, the Conv3D then RNN failed to learn anything on the previous iteration. I think that a lot of that has to do with the simulation just shitting its pants and grinding to a halt. The simulation gradually slows down to the point that, instead of the ~3 steps per simulation second, moves through ~1.4 steps per simulation second. Keep in mind, this is at no more than 30k iterations, which is how often I'm resetting things.
+
+The car also can't figure out: "hey! this is a road, and I should probably stay on it. I guess that this is because the green grass and the gray road kind of look like the same color when they are converted to grayscale. There really isn't any texture there. So, I'm going to add color back in. I really think that this will help. 

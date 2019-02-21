@@ -94,6 +94,7 @@ random.seed(100)
 # IRL seconds  #x2.0 speed: 4.5 steps per IRL second @ 0,2 wait
 need_channel_dimension = True
 concat_x_y_channels = True
+scene_in_grayscale = False
 env = AirSimEnv(num_steering_angles=7,  # should be an odd number so as to include 0
                       max_num_steps_in_episode=1000,
                       fraction_of_top_of_scene_to_drop=0.0,  # leaving these as 0 so as to keep square images
@@ -107,7 +108,8 @@ env = AirSimEnv(num_steering_angles=7,  # should be an odd number so as to inclu
                       depth_settings_md_size=(96,96),
                       scene_settings_md_size=(128,128),
                       proximity_instead_of_depth_planner=False,
-                      concat_x_y_coords_to_channel_dim=concat_x_y_channels)  # NN doesn't care if image looks  nice
+                      concat_x_y_coords_to_channel_dim=concat_x_y_channels,
+                      convert_scene_to_grayscale=scene_in_grayscale)  # NN doesn't care if image looks  nice
                       # leaving ^ as None almost doubles num steps per IRL second, meaning
                       # can increase sim speed an get more done!
 
@@ -136,22 +138,34 @@ else:
   # but do need this if ConvRNN2D or ConvRNN
   if need_channel_dimension:
     if concat_x_y_channels is True:
-      SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (3,)
+      if scene_in_grayscale:
+        SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (1+2,)
+      else:
+        SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (3+2,)
+        
       DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE + (3,)
       SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE + (1,)
       PROXIMITY_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.PROXIMITY_INPUT_SHAPE + (1,)
     else:
-      SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (1,)
+      if scene_in_grayscale:
+        SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (1,)
+      else:
+        SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (3,)
+        
       DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE + (1,)
       SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE + (1,)
       PROXIMITY_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.PROXIMITY_INPUT_SHAPE + (1,)
 
 
   else:
-    SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE
+    if scene_in_grayscale:
+      SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE
+    else:
+      SCENE_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SCENE_INPUT_SHAPE + (3,)
+
     DEPTH_INPUT_SHAPE = (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.DEPTH_PLANNER_INPUT_SHAPE
     SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.SENSOR_INPUT_SHAPE
-    SENSOR_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.PROXIMITY_INPUT_SHAPE
+    PROXIMITY_INPUT_SHAPE =  (NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,) + env.PROXIMITY_INPUT_SHAPE
 
 
 print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE, PROXIMITY_INPUT_SHAPE)
@@ -252,7 +266,7 @@ replay_memory = SequentialMemory(limit=6000, window_length=NUM_FRAMES_TO_STACK_I
 num_total_training_steps = 35000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
-                                        value_max=0.9, # start off 100% random
+                                        value_max=0.95, # start off 100% random
                                         value_min=0.025,  # get to random action x% of time
                                         value_test=0.00001,  # MUST BE >0 else, for whatever reason, won't get random start
                                         nb_steps=20000) # of time steps to go from epsilon=value_max to =value_min
@@ -270,7 +284,7 @@ dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=9000, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=192, batch_size=12,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=256, batch_size=12,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
                                   print_frequency=17)
 
@@ -281,9 +295,9 @@ init_lr = 1e-6  # lr was too high and caused weights to go to NaN --> output NaN
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_022019_01.h5'
+weights_filename = 'dqn_collision_avoidance_022119_01.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
-want_to_train =True
+want_to_train = True
 load_in_weights_in_weights_filename = True
 if want_to_train is True:
 
