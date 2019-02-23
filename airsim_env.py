@@ -30,13 +30,18 @@ class AirSimEnv(Env):
                   need_channel_dimension=False,
                   proximity_instead_of_depth_planner=False,
                   concat_x_y_coords_to_channel_dim=False,
-                  convert_scene_to_grayscale=False):
+                  convert_scene_to_grayscale=False,
+                  want_depth_image=True):
     """
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
     and the looping through the image is handled by this class. Therefore, only 1
     parameter to this lambda function, call it pixel_value or something. Default is
     a do nothing function.
     """
+    self.want_depth_image = want_depth_image
+    if proximity_instead_of_depth_planner:
+      self.want_depth_image = True
+      
     # 1st 2 must reflect settings.json
     self.convert_scene_to_grayscale = convert_scene_to_grayscale
     if convert_scene_to_grayscale:
@@ -125,30 +130,44 @@ class AirSimEnv(Env):
     self.depth_planner_dilation_kernel = np.ones((3,5),np.uint8) * 255
 
     # requests also returned in this order; order by how concatentate img, from L to R
-    self.list_of_img_request_objects = [airsim.ImageRequest(camera_name=self.left_cam_name,
-                                                            image_type=airsim.ImageType.Scene,
-                                                            pixels_as_float=False,
-                                                            compress=False),
-                                        airsim.ImageRequest(camera_name=self.forward_cam_name,
-                                                            image_type=airsim.ImageType.Scene,
-                                                            pixels_as_float=False,
-                                                            compress=False),
-                                        airsim.ImageRequest(camera_name=self.right_cam_name,
-                                                            image_type=airsim.ImageType.Scene,
-                                                            pixels_as_float=False,
-                                                            compress=False),
-                                        airsim.ImageRequest(camera_name=self.left_cam_name,
-                                                            image_type=airsim.ImageType.DepthPlanner,
-                                                            pixels_as_float=True,
-                                                            compress=False),
-                                        airsim.ImageRequest(camera_name=self.forward_cam_name,
-                                                            image_type=airsim.ImageType.DepthPlanner,
-                                                            pixels_as_float=True,
-                                                            compress=False),
-                                        airsim.ImageRequest(camera_name=self.right_cam_name,
-                                                            image_type=airsim.ImageType.DepthPlanner,
-                                                            pixels_as_float=True,
-                                                            compress=False) ]
+    if self.want_depth_image:
+      self.list_of_img_request_objects = [airsim.ImageRequest(camera_name=self.left_cam_name,
+                                                              image_type=airsim.ImageType.Scene,
+                                                              pixels_as_float=False,
+                                                              compress=False),
+                                          airsim.ImageRequest(camera_name=self.forward_cam_name,
+                                                              image_type=airsim.ImageType.Scene,
+                                                              pixels_as_float=False,
+                                                              compress=False),
+                                          airsim.ImageRequest(camera_name=self.right_cam_name,
+                                                              image_type=airsim.ImageType.Scene,
+                                                              pixels_as_float=False,
+                                                              compress=False),
+                                          airsim.ImageRequest(camera_name=self.left_cam_name,
+                                                              image_type=airsim.ImageType.DepthPlanner,
+                                                              pixels_as_float=True,
+                                                              compress=False),
+                                          airsim.ImageRequest(camera_name=self.forward_cam_name,
+                                                              image_type=airsim.ImageType.DepthPlanner,
+                                                              pixels_as_float=True,
+                                                              compress=False),
+                                          airsim.ImageRequest(camera_name=self.right_cam_name,
+                                                              image_type=airsim.ImageType.DepthPlanner,
+                                                              pixels_as_float=True,
+                                                              compress=False) ]
+    else:
+      self.list_of_img_request_objects = [airsim.ImageRequest(camera_name=self.left_cam_name,
+                                                              image_type=airsim.ImageType.Scene,
+                                                              pixels_as_float=False,
+                                                              compress=False),
+                                          airsim.ImageRequest(camera_name=self.forward_cam_name,
+                                                              image_type=airsim.ImageType.Scene,
+                                                              pixels_as_float=False,
+                                                              compress=False),
+                                          airsim.ImageRequest(camera_name=self.right_cam_name,
+                                                              image_type=airsim.ImageType.Scene,
+                                                              pixels_as_float=False,
+                                                              compress=False)]
 
 
     # ; ordering: 1 2 3 4 in sim window while Quaternionr() has 2 3 4 1 for some reason
@@ -224,15 +243,15 @@ class AirSimEnv(Env):
 
     # BEGIN TIMESTEP
     self.client.setCarControls(self.car_controls)  # tested to see if conrols changed even if set before unpause: it does
-    self.client.simPause(False)  # unpause AirSim
+    #self.client.simPause(False)  # unpause AirSim
     sim_unpaused_start_time = time.time()  # used to track time at which sim is unpaused
 
-    time.sleep(self.seconds_pause_between_steps)  # take this action for user specified amt of IRL seconds
-
+    #time.sleep(self.seconds_pause_between_steps)  # take this action for user specified amt of IRL seconds
+    self.client.simContinueForTime(self.seconds_pause_between_steps)
 
     # can, in fact, get this information once pause, so get it now
 
-    self.client.simPause(True)  # pause to do backend stuff
+    #self.client.simPause(True)  # pause to do backend stuff
     self.elapsed_episode_time_in_simulation_secs += time.time() - sim_unpaused_start_time
     # END TIMESTEP
     
@@ -274,6 +293,7 @@ class AirSimEnv(Env):
     # done if episode timer runs out (1) OR if fallen into oblilvion (2)
     # OR if spinning out of control (3) OR if knocked into the stratosphere (4)
     done = False
+
     if self.episode_step_count >  self.steps_per_episode or \
        car_info.kinematics_estimated.position.z_val > -0.58 or \
        abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
@@ -296,7 +316,7 @@ class AirSimEnv(Env):
     if self.episode_step_count % 30 == 0:
       print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
                                                                                   (self.episode_step_count / (time.time() -self.episode_time_in_irl_seconds))))
-      print('\t...averaging {} steps per sim sec (assuming x1.0 speed).'.format(self.episode_step_count / (self.elapsed_episode_time_in_simulation_secs)))
+      #print('\t...averaging {} steps per sim sec (assuming x1.0 speed).'.format(self.episode_step_count / (self.elapsed_episode_time_in_simulation_secs)))
     # check if made it to w/in the radius of the destination area/circle
     if self._arrived_at_destination(car_info):
       done = True
@@ -344,7 +364,7 @@ class AirSimEnv(Env):
     self.current_distance_from_destination = self.total_distance_to_destination
     self.elapsed_episode_time_in_simulation_secs = 1.0
 
-    time.sleep(4)  # crash issue with requesting stuff before actually capable of resettting? idk
+    time.sleep(10)  # crash issue with requesting stuff before actually capable of resettting? idk
 
     list_of_img_response_objects = self._request_sim_images()
     car_info = self.client.getCarState()
@@ -462,15 +482,17 @@ class AirSimEnv(Env):
     
     state_t2.append(self._transform_scene_image(scene_image))
 
-    depth_planner_image = self._extract_depth_planner_image(list_of_img_response_objects)
-    if self.proximity_instead_of_depth_planner is True:
-      proximities_by_sector = np.array(self.proximity_sensor.depth_planner_image_to_proximity_list(depth_planner_image))
-      if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
-        proximities_by_sector =  proximities_by_sector.reshape(proximities_by_sector.shape[0], 1)
-      state_t2.append(proximities_by_sector)
+    if self.want_depth_image:
+      depth_planner_image = self._extract_depth_planner_image(list_of_img_response_objects)
       
-    else:
-      state_t2.append(self._transform_depth_planner_image(depth_planner_image))
+      if self.proximity_instead_of_depth_planner is True:
+        proximities_by_sector = np.array(self.proximity_sensor.depth_planner_image_to_proximity_list(depth_planner_image))
+        if self.need_channel_dimension == True:  # channels need own dimension for Conv3D and Conv2DRnn
+          proximities_by_sector =  proximities_by_sector.reshape(proximities_by_sector.shape[0], 1)
+        state_t2.append(proximities_by_sector)
+        
+      else:
+        state_t2.append(self._transform_depth_planner_image(depth_planner_image))
                       
     state_t2.append(self._extract_sensor_data(car_info))
     #print('shape of state', np.array(state_t2).shape)  # for debug
