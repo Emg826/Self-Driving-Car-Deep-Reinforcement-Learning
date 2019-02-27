@@ -201,7 +201,7 @@ class AirSimEnv(Env):
     self.ending_coords = airsim.Vector3r(122.288, 12.283, -1.0)  # appx 298 m from start; mostly straight
     """
 
-    self.beginning_coords = airsim.Pose(airsim.Vector3r(-758.236, -177.518, -0.66),  # safe
+    self.beginning_coords = airsim.Pose(airsim.Vector3r(-758.236, -175.518, -0.66),  # safe
                                                   airsim.Quaternionr(0.0,0.0, -0.723, 0.691))
     #self.ending_coords = airsim.Vector3r(109.694, -396.685, -1.0)  # appx 298 m from start; mostly straight
     self.ending_coords = airsim.Vector3r(-702.551, -228.107, -1.0)  # appx 298 m from start; mostly straight
@@ -401,42 +401,29 @@ class AirSimEnv(Env):
     # if collided with something with a name
     sec_since_last_collision = time.time() -  collision_info.time_stamp*10**(-9)
 
-    # if hit something with an ID
-    if sec_since_last_collision < self.seconds_between_collision_in_sim_and_register and collision_info.time_stamp != 0.0:  # irl seconds
-      self.distance_since_last_collision = 0.0
+    # if have made very little progress towards goal so far -- note, get about 3 to 4 steps per IRL sec on school computer
+    if (self.total_distance_to_destination - self.current_distance_from_destination) <  15.0 and self.episode_step_count > 100:
       reward = -1.0
 
-    # if off road
-    elif car_info.kinematics_estimated.position.z_val < -0.695 or car_info.kinematics_estimated.position.z_val > -0.61 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125:  # off road
+    elif car_info.kinematics_estimated.position.z_val < -0.695 or car_info.kinematics_estimated.position.z_val > -0.625:
+      reward = -1.0
+
+    elif sec_since_last_collision < self.seconds_between_collision_in_sim_and_register and collision_info.time_stamp != 0.0:  # irl seconds
+      self.distance_since_last_collision = 0.0
       reward = -1.0
 
     # if hit curb or an unnamed object
     elif (collision_info.object_id == -1 and collision_info.object_name != '' and car_info.speed < 1.0) or \
-        abs(airsim.to_eularian_angles(car_info.kinematics_estimated.orientation)[0]) > 0.03:   # check if hit curb - pitch changes
+         (abs(car_info.kinematics_estimated.orientation.x_val) > 0.035 or abs(car_info.kinematics_estimated.orientation.y_val) > 0.035):   # check if hit curb (car x and y orientation changes)
       self.distance_since_last_collision = 0.0
-      reward = -0.05
+      reward = -0.1
 
     else:
-      # w_dist * (sigmoid(sqrt( 0.15*x)- w_dist*10)
-      w_dist = 0.98
-      assert w_dist <= 1.0
+      # will always be >= 0
+      distance_reward =  self.current_distance_travelled_towards_destination / self.total_distance_to_destination
 
-      # hit 1.0 reward @ 2kunits
-      total_distance_contrib = w_dist * (self._manhattan_distance(car_info.kinematics_estimated.position.x_val,
-                                                                                       self.previous_coords.x_val,
-                                                                                       car_info.kinematics_estimated.position.y_val,
-                                                                                       self.previous_coords.y_val) / self.max_meters_per_second)
-
-      # slight reward for steering straight, i.e., only turn if necessary in long term
-      w_nonzero_steering = 1.0-w_dist
-
-      # note: steering [-1, 1], so w/ 5 steering angles, have: {-1., -0.5, 0., .5, 1.}
-      # this means the decrease in reward (never penalty though) is linear deviate from 0. steering
-      steering_contrib = w_nonzero_steering * (1.0 - abs(self.car_controls.steering))
-
-      # for debug
-      #print(self.distance_since_last_collision, total_distance_contrib + steering_contrib)
-      reward =  total_distance_contrib + steering_contrib
+      #reward = time_reward + distance_reward
+      reward = max(0, distance_reward - 0.03)  # don't reward until get sufficiently far out - should help avoid driving in circles
 
     return reward
 

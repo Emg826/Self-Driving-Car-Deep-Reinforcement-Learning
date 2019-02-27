@@ -98,7 +98,7 @@ scene_in_grayscale = False
 want_depth_image = False
 env = AirSimEnv(num_steering_angles=7,  # should be an odd number so as to include 0
                       max_num_steps_in_episode=1000,
-                      fraction_of_top_of_scene_to_drop=0.3,  # leaving these as 0 so as to keep square images
+                      fraction_of_top_of_scene_to_drop=0.0,  # leaving these as 0 so as to keep square images
                       fraction_of_bottom_of_scene_to_drop=0.0,
                       fraction_of_top_of_depth_to_drop=0.0,
                       fraction_of_bottom_of_depth_to_drop=0.0,
@@ -178,19 +178,23 @@ print(SCENE_INPUT_SHAPE, DEPTH_INPUT_SHAPE, SENSOR_INPUT_SHAPE, PROXIMITY_INPUT_
 # BEGIN MODEL - 
 #first input model - height, width, num_channels (gray, so only 1 channel)
 scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)  # strid h, w
-scene_conv_1 = Conv3D(64, kernel_size=(1, 8, 8), strides=(1, 4, 4), data_format='channels_last')(scene_nn_input)
+scene_conv_1 = Conv3D(64, kernel_size=(1, 8, 8), strides=(1, 2, 2), data_format='channels_last')(scene_nn_input)
 scene_1_activation = LeakyReLU()(scene_conv_1)
 
 scene_conv_2 = Conv3D(128, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_1_activation)
 scene_2_activation = LeakyReLU()(scene_conv_2)
 
-scene_conv_3 = Conv3D(96, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_2_activation)
+scene_conv_3 = Conv3D(256, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_2_activation)
 scene_3_activation = LeakyReLU()(scene_conv_3)
 
+# new as of 0227 923am
+scene_conv_4 = Conv3D(128, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_3_activation)
+scene_4_activation = LeakyReLU()(scene_conv_4)
+
 #scene_flat = Flatten()(scene_4_activation)
-print(scene_3_activation._keras_shape)
-out_shape = scene_3_activation._keras_shape  # https://github.com/keras-team/keras/issues/1981#issuecomment-301327235
-scene_reshaped = Reshape(target_shape=(NUM_FRAMES_TO_STACK_INCLUDING_CURRENT, out_shape[2]*out_shape[3]*out_shape[4]))(scene_3_activation)
+print(scene_4_activation._keras_shape)
+out_shape = scene_4_activation._keras_shape  # https://github.com/keras-team/keras/issues/1981#issuecomment-301327235
+scene_reshaped = Reshape(target_shape=(NUM_FRAMES_TO_STACK_INCLUDING_CURRENT, out_shape[2]*out_shape[3]*out_shape[4]))(scene_4_activation)
 
 
 """
@@ -276,23 +280,23 @@ replay_memory = SequentialMemory(limit=4000, window_length=NUM_FRAMES_TO_STACK_I
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
 
-num_total_training_steps = 10000
+num_total_training_steps = 85000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
-                                        value_max=0.8, # start off 100% random
+                                        value_max=0.95, # start off 100% random
                                         value_min=0.05,  # get to random action x% of time
                                         value_test=0.00001,  # MUST BE >0 else, for whatever reason, won't get random start
-                                        nb_steps=8000) # of time steps to go from epsilon=value_max to =value_min
+                                        nb_steps=70000) # of time steps to go from epsilon=value_max to =value_min
 
 
 multi_input_processor = MultiInputProcessor(num_inputs=2+want_depth_image, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 35.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 25.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
-train_every_n_steps = 4
+train_every_n_steps = 16
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=9000, # was soft update parameter?
@@ -308,9 +312,9 @@ init_lr = 1e-9  # lr was too high and caused weights to go to NaN --> output NaN
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_02262019_01.h5'
+weights_filename = 'dqn_collision_avoidance_02272019_01.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
-want_to_train = False
+want_to_train = True
 load_in_weights_in_weights_filename = True
 if want_to_train is True:
 
