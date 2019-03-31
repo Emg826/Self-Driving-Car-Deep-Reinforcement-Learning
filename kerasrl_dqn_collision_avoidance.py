@@ -88,7 +88,7 @@ K.set_session(K.tf.Session(config=cfg))
 # have to be careful not to make PHI too complex, else decr num steps per IRL second
 PHI = lambda pixel: 1.0 / (pixel+1.0)
 
-random.seed(100)
+random.seed(123)
 
 # IRL seconds # x1.0 speed: 9.4 steps per sim sec @ 0.05 wait; 7.5 spss @ 0.1; 3.7 spss @ 0.2 wait
 # IRL seconds  #x2.0 speed: 4.5 steps per IRL second @ 0,2 wait
@@ -96,13 +96,13 @@ need_channel_dimension = True
 concat_x_y_channels = True
 scene_in_grayscale = False
 want_depth_image = False
-env = AirSimEnv(num_steering_angles=7,  # should be an odd number so as to include 0
+env = AirSimEnv(num_steering_angles=5,  # should be an odd number so as to include 0
                       max_num_steps_in_episode=1000,
                       fraction_of_top_of_scene_to_drop=0.0,  # leaving these as 0 so as to keep square images
                       fraction_of_bottom_of_scene_to_drop=0.0,
                       fraction_of_top_of_depth_to_drop=0.0,
                       fraction_of_bottom_of_depth_to_drop=0.0,
-                      seconds_pause_between_steps=0.3,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
+                      seconds_pause_between_steps=0.4,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
                       seconds_between_collision_in_sim_and_register=0.2,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_depth_pixels=PHI,
                       need_channel_dimension=need_channel_dimension,
@@ -118,7 +118,7 @@ env = AirSimEnv(num_steering_angles=7,  # should be an odd number so as to inclu
 
 num_steering_angles = env.action_space.n
 
-NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 5
+NUM_FRAMES_TO_STACK_INCLUDING_CURRENT = 3
 STACK_EVERY_N_FRAMES = 1  # don't change this for now
 
 SCENE_INPUT_SHAPE = None
@@ -181,14 +181,14 @@ scene_nn_input = Input(shape=SCENE_INPUT_SHAPE)  # strid h, w
 scene_conv_1 = Conv3D(64, kernel_size=(1, 8, 8), strides=(1, 2, 2), data_format='channels_last')(scene_nn_input)
 scene_1_activation = LeakyReLU()(scene_conv_1)
 
-scene_conv_2 = Conv3D(128, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_1_activation)
+scene_conv_2 = Conv3D(64, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_1_activation)
 scene_2_activation = LeakyReLU()(scene_conv_2)
 
-scene_conv_3 = Conv3D(256, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_2_activation)
+scene_conv_3 = Conv3D(96, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_2_activation)
 scene_3_activation = LeakyReLU()(scene_conv_3)
 
 # new as of 0227 923am
-scene_conv_4 = Conv3D(128, kernel_size=(1, 4, 4), strides=(1, 2, 2), data_format='channels_last')(scene_3_activation)
+scene_conv_4 = Conv3D(64, kernel_size=(1, 2, 2), strides=(1, 1, 1), data_format='channels_last')(scene_3_activation)
 scene_4_activation = LeakyReLU()(scene_conv_4)
 
 #scene_flat = Flatten()(scene_4_activation)
@@ -256,8 +256,8 @@ final_output = SimpleRNN(num_steering_angles, activation='linear')(merged_simple
 
 
 """
-merged_simplernn_1 = SimpleRNN(512, activation='sigmoid', return_sequences=True)(merge)
-merged_simplernn_2 = SimpleRNN(784, activation='sigmoid', return_sequences=False)(merged_simplernn_1)
+merged_simplernn_1 = SimpleRNN(192, activation='sigmoid', return_sequences=True)(merge)
+merged_simplernn_2 = SimpleRNN(256, activation='sigmoid', return_sequences=False)(merged_simplernn_1)
 final_output = Dense(num_steering_angles, activation='linear')(merged_simplernn_2)
 
 #model = Model(inputs=[scene_nn_input, depth_nn_input, sensor_input], outputs=final_output)
@@ -271,7 +271,7 @@ print(model.summary())
 #plot_model(model, to_file='multi_ddqn.png')
 
 
-replay_memory = SequentialMemory(limit=4000, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
+replay_memory = SequentialMemory(limit=1776, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
 #replay_memory = SkippingMemory(limit=8000,
 #                               num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
 #                               skip_factor=STACK_EVERY_N_FRAMES)
@@ -280,41 +280,41 @@ replay_memory = SequentialMemory(limit=4000, window_length=NUM_FRAMES_TO_STACK_I
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
 
-num_total_training_steps = 85000
+num_total_training_steps = 50000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
                                         value_max=0.95, # start off 100% random
                                         value_min=0.05,  # get to random action x% of time
                                         value_test=0.00001,  # MUST BE >0 else, for whatever reason, won't get random start
-                                        nb_steps=70000) # of time steps to go from epsilon=value_max to =value_min
+                                        nb_steps=22000) # of time steps to go from epsilon=value_max to =value_min
 
 
 multi_input_processor = MultiInputProcessor(num_inputs=2+want_depth_image, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 25.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 12.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
-train_every_n_steps = 16
+train_every_n_steps = 4
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
-                                  enable_dueling_network=False, target_model_update=9000, # was soft update parameter?
+                                  enable_dueling_network=False, target_model_update=8500, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=256, batch_size=8,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=128, batch_size=6,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
-                                  print_frequency=12)
+                                  print_frequency=4)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 #https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
 # lr := lr * ( 1 / (1 + (decay * iterations)))
-init_lr = 1e-9  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
+init_lr = 1e-3  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_02272019_01.h5'
+weights_filename = 'dqn_collision_avoidance_03312019_01.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
-want_to_train = True
+want_to_train = False
 load_in_weights_in_weights_filename = True
 if want_to_train is True:
 
