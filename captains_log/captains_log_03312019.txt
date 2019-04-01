@@ -1,0 +1,17 @@
+530pm. I can't not try and lower the learning rate, and so that's what I did. Unfortunately, it resulted in constant q-values. Not sure what that's all about.
+
+An idea came to me: reduce gamma by a lot. The task to the car is not to navigate itself to the end of the road; really, the task is to just stay on the road. That's it. And, really, all that the car can know in its current time (because of partial observability) is the next 4-5 seconds of what's  going to happen. Prevoiusly, gamma was at 0.5 after 30 or 35 time steps. I reduced it to go to 0.5 after 12 time steps this last time around (the time w/ the constant q-values). Now, though, I reduced it even further: 0.5 by 6 time steps into the future. This makes sense to me since really, I've been asking the car to do an impossible task: navigate to the end of a road that it cannot see, knows nothing about, and is receiving no navigation data. Therefore, the gamma value needed to be changed to reflect the true objective: getting the car to at least stay on the road. 
+There is, of course, the danger that too low of a gamma will result in erradic behavior from time step to time step. I think, though, that a lower gamma will help more than it will hurt, so for now, I'm not too concerned about that. we'll see how it works. 
+
+
+
+
+NEXT DAY, APRIL 1
+
+138pm. Wow! It actually kind of worked. I mean, it still can't drive straight, but at least it is making more adjustments than it was before. It doesn't just drive in a straight line, and it does actually respond (somewhat) to the edges of the road! 
+
+What do I do from here? Do increase the number of time steps until gamma=0.5 or do I decrease it? I think that since the car is correcting at the last second, I need to increase it a bit. Also, for the learning rate, I'm going to drop it 1 order of magnitued to 5e-4. This should improve ithelp. I'm excited to see what happens.
+
+PS: Oh, I'm also reducing the initial epsilon from 0.95 to 0.7 since we've already trained for 15k to 20k iterations. 
+
+PPS: Oh wait: it just got about half way to the objective! Wow!

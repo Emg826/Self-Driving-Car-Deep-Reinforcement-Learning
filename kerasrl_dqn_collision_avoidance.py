@@ -102,7 +102,7 @@ env = AirSimEnv(num_steering_angles=5,  # should be an odd number so as to inclu
                       fraction_of_bottom_of_scene_to_drop=0.0,
                       fraction_of_top_of_depth_to_drop=0.0,
                       fraction_of_bottom_of_depth_to_drop=0.0,
-                      seconds_pause_between_steps=0.4,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
+                      seconds_pause_between_steps=0.5,  # it's not a linear scaling down: if go from x1 speed w/ wait 0.2, cant do 0.1 wait for x2 speed
                       seconds_between_collision_in_sim_and_register=0.2,  # note avg 4.12 steps per IRL sec on school computer
                       lambda_function_to_apply_to_depth_pixels=PHI,
                       need_channel_dimension=need_channel_dimension,
@@ -280,10 +280,10 @@ replay_memory = SequentialMemory(limit=1776, window_length=NUM_FRAMES_TO_STACK_I
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
 
-num_total_training_steps = 50000
+num_total_training_steps = 5000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
-                                        value_max=0.95, # start off 100% random
+                                        value_max=0.7, # start off 100% random
                                         value_min=0.05,  # get to random action x% of time
                                         value_test=0.00001,  # MUST BE >0 else, for whatever reason, won't get random start
                                         nb_steps=22000) # of time steps to go from epsilon=value_max to =value_min
@@ -292,7 +292,7 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 multi_input_processor = MultiInputProcessor(num_inputs=2+want_depth_image, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 12.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 8.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
@@ -301,20 +301,20 @@ dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
                                   enable_dueling_network=False, target_model_update=8500, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=128, batch_size=6,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=96, batch_size=4,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
                                   print_frequency=4)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 #https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
 # lr := lr * ( 1 / (1 + (decay * iterations)))
-init_lr = 1e-3  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
+init_lr = 5e-4  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_03312019_01.h5'
+weights_filename = 'dqn_collision_avoidance_03312019_02.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
-want_to_train = False
+want_to_train = True
 load_in_weights_in_weights_filename = True
 if want_to_train is True:
 
