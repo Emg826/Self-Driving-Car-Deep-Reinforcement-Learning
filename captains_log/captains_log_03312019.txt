@@ -15,3 +15,16 @@ What do I do from here? Do increase the number of time steps until gamma=0.5 or 
 PS: Oh, I'm also reducing the initial epsilon from 0.95 to 0.7 since we've already trained for 15k to 20k iterations. 
 
 PPS: Oh wait: it just got about half way to the objective! Wow!
+
+
+742pm. IT WORKED!!!!!!!! THANK GOD!!!!!!!!!!!! It responds to the edge of the road and is able to drive all the way up until that 90 degreee turn! WOOOOOOOOO!!!!!!!
+
+I've saved a copy of the weights just in case, but I'm going to let it train for a little while longer. I'm thinking that I might remove the pauses of the simulation since that seems to the cause of the slow downs, but IDK. 
+
+I just increased the time step at which gamma=0.5 to 9 instead of 8. It could use a little more forward planning, but 8 seems to be really great right now. Also, this is interesting that I'm increasing the gamma over time because I read something about doing this to achieve better learning results somwhere (don't remember where, though). Also, I decreased epsilon init from 0.7 to 0.5. The car is ready to start exploiting. 
+
+Oh, also, though the simulation slowed down tremendously, training still lasted for about 10-15k timesteps, so that's nice. 
+
+Ok, so I've decided that I am going to remove the pauses. I don't think that they should make that much of a difference, but who knows. Also, I'm setting number of training steps (total) to 30k from 5k. Other idea that I implemented was to pause only when you would be training after the time step. I visually tested this: I had a large batch size of 24, which slows down the whole computer, and I saw that the sim did in fact stop when the training began. Also, in mmultiinput processor, I put a sleep statements in that would cause the car to just proceed ahead for 10 sec if it was training time but the pauses didn't catch that.
+
+Scrattch that actually, pause not working.

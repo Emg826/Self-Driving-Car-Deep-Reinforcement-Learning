@@ -31,13 +31,16 @@ class AirSimEnv(Env):
                   proximity_instead_of_depth_planner=False,
                   concat_x_y_coords_to_channel_dim=False,
                   convert_scene_to_grayscale=False,
-                  want_depth_image=True):
+                  want_depth_image=True,
+                  train_frequency=4):
     """
     Note: preprocessing_lambda_function_to_apply_to_pixels is applied to each pixel,
     and the looping through the image is handled by this class. Therefore, only 1
     parameter to this lambda function, call it pixel_value or something. Default is
     a do nothing function.
     """
+    self.train_frequency = train_frequency
+    
     self.want_depth_image = want_depth_image
     if proximity_instead_of_depth_planner:
       self.want_depth_image = True
@@ -106,6 +109,7 @@ class AirSimEnv(Env):
     self.max_meters_per_second = 35.0 * 0.44704  # 35.0 mph is reasonable max for that windy road
     # in-sim episode handling
     self.episode_step_count = 0
+    self.total_step_count = 0
     self.steps_per_episode = max_num_steps_in_episode
     self.total_num_episodes = 0  # over all eisodes
     self.total_num_steps = 0   # over all episodes
@@ -222,6 +226,7 @@ class AirSimEnv(Env):
     self.current_distance_travelled_towards_destination = 0.0
     self.episode_time_in_irl_seconds = 0.0  # only used for debug and steps/second measurement,
     # not for tracking progress in sim; note: sim steps per real life seconds is ~6
+    self.sim_is_paused = False
 
     print('The car will need to travel {} simulation meters to arrive at the destination'.format(self.total_distance_to_destination))
 
@@ -241,6 +246,7 @@ class AirSimEnv(Env):
     """
     #assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
 
+
     # action_t
     steering_angle = self.action_space_steering[action]
     self.car_controls.steering = steering_angle
@@ -253,6 +259,10 @@ class AirSimEnv(Env):
     self.client.simPause(False)
     time.sleep(self.seconds_pause_between_steps)
     self.client.simPause(True)
+
+    self.episode_step_count += 1
+    self.total_step_count +=  1
+
 
     self.elapsed_episode_time_in_simulation_secs += time.time() - sim_unpaused_start_time
     # END TIMESTEP
@@ -296,7 +306,6 @@ class AirSimEnv(Env):
     done = self._is_done(car_info)
 
     # mostly for debug, but can be helpful
-    self.episode_step_count += 1
     if self.episode_step_count % 30 == 0:
       print('Ep step {}, averaging {} steps per IRL sec'.format(self.episode_step_count,
                                                                                   (self.episode_step_count / (time.time() -self.episode_time_in_irl_seconds))))
@@ -306,6 +315,7 @@ class AirSimEnv(Env):
       print(reward_t)
 
     self.previous_coords = car_info.kinematics_estimated.position
+
     return state_t2, reward_t, done, {}
 
 

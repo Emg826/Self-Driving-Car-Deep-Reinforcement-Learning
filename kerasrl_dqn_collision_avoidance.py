@@ -96,6 +96,7 @@ need_channel_dimension = True
 concat_x_y_channels = True
 scene_in_grayscale = False
 want_depth_image = False
+train_every_n_steps = 4
 env = AirSimEnv(num_steering_angles=5,  # should be an odd number so as to include 0
                       max_num_steps_in_episode=1000,
                       fraction_of_top_of_scene_to_drop=0.0,  # leaving these as 0 so as to keep square images
@@ -111,7 +112,8 @@ env = AirSimEnv(num_steering_angles=5,  # should be an odd number so as to inclu
                       proximity_instead_of_depth_planner=False,
                       concat_x_y_coords_to_channel_dim=concat_x_y_channels,
                       convert_scene_to_grayscale=scene_in_grayscale,
-                      want_depth_image=want_depth_image)  # NN doesn't care if image looks  nice
+                      want_depth_image=want_depth_image,
+                      train_frequency=train_every_n_steps)  # NN doesn't care if image looks  nice
                       # leaving ^ as None almost doubles num steps per IRL second, meaning
                       # can increase sim speed an get more done!
 
@@ -280,10 +282,10 @@ replay_memory = SequentialMemory(limit=1776, window_length=NUM_FRAMES_TO_STACK_I
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
 
-num_total_training_steps = 5000
+num_total_training_steps = 30000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
-                                        value_max=0.7, # start off 100% random
+                                        value_max=0.5, # start off 100% random
                                         value_min=0.05,  # get to random action x% of time
                                         value_test=0.00001,  # MUST BE >0 else, for whatever reason, won't get random start
                                         nb_steps=22000) # of time steps to go from epsilon=value_max to =value_min
@@ -292,7 +294,7 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
 multi_input_processor = MultiInputProcessor(num_inputs=2+want_depth_image, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 8.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 9.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
