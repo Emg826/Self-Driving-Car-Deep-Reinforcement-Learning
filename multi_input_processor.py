@@ -1,6 +1,7 @@
 import numpy as np
 
 from rl.core import Processor
+import time
 
 
 class MultiInputProcessor(Processor):
@@ -27,7 +28,6 @@ class MultiInputProcessor(Processor):
     #print(state_batch.shape)  # debug
 
     state_batch_separated_by_input = [[] for x in range(self.num_inputs)]
-
     if self.num_inputs_stacked == 1:
 
       if len(state_batch.shape) == 3 and state_batch.shape[0] == 1:
@@ -66,7 +66,6 @@ class MultiInputProcessor(Processor):
             state_batch_separated_by_input[idx_of_current_input_type].append(stack_of_current_type_of_input)
 
     #print(len(state_batch_separated_by_input),len(state_batch_separated_by_input[0]))  # debug
-        
-      
 
+      
     return state_batch_separated_by_input

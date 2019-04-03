@@ -273,7 +273,7 @@ print(model.summary())
 #plot_model(model, to_file='multi_ddqn.png')
 
 
-replay_memory = SequentialMemory(limit=1776, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
+replay_memory = SequentialMemory(limit=3000, window_length=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT)
 #replay_memory = SkippingMemory(limit=8000,
 #                               num_states_to_stack=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT,
 #                               skip_factor=STACK_EVERY_N_FRAMES)
@@ -282,41 +282,41 @@ replay_memory = SequentialMemory(limit=1776, window_length=NUM_FRAMES_TO_STACK_I
 # select a random action; otherwise, consult the agent
 # epsilon = f(x) = ((self.value_max - self.value_min) / self.nb_steps)*x + self.value_max
 
-num_total_training_steps = 30000
+num_total_training_steps = 5000
 policy = LinearAnnealedPolicy(EpsGreedyQPolicy(),
                                         attr='eps',
-                                        value_max=0.5, # start off 100% random
+                                        value_max=0.95, # start off 100% random
                                         value_min=0.05,  # get to random action x% of time
                                         value_test=0.00001,  # MUST BE >0 else, for whatever reason, won't get random start
-                                        nb_steps=22000) # of time steps to go from epsilon=value_max to =value_min
+                                        nb_steps=num_total_training_steps) # of time steps to go from epsilon=value_max to =value_min
 
 
 multi_input_processor = MultiInputProcessor(num_inputs=2+want_depth_image, num_inputs_stacked=NUM_FRAMES_TO_STACK_INCLUDING_CURRENT) # 3 inputs: scene img, depth img, sensor data
 
 # compute gamma -  a lot can change from now til end of car run -
-future_time_steps_until_discount_rate_is_one_half = 9.0  # assuming ~ 4 time steps per simulation second
+future_time_steps_until_discount_rate_is_one_half = 7.0  # assuming ~ 4 time steps per simulation second
 # solve gamma ^ n = 0.5 for some n - kind of like a half life?
 discount_rate = math.exp( math.log(0.5, math.e) / future_time_steps_until_discount_rate_is_one_half )
 
 train_every_n_steps = 4
 dqn_agent = TransparentDQNAgent(model=model,nb_actions=num_steering_angles,
                                   memory=replay_memory, enable_double_dqn=True,
-                                  enable_dueling_network=False, target_model_update=8500, # was soft update parameter?
+                                  enable_dueling_network=False, target_model_update=4500, # was soft update parameter?
                                   policy=policy, gamma=discount_rate, train_interval=train_every_n_steps,     
-                                  nb_steps_warmup=96, batch_size=4,   # i'm going to view gamma like a confidence level in q val estimate
+                                  nb_steps_warmup=64, batch_size=4,   # i'm going to view gamma like a confidence level in q val estimate
                                   processor=multi_input_processor,
                                   print_frequency=4)
 
 #https://github.com/keras-team/keras/blob/master/keras/optimizers.py#L157:
 #https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
 # lr := lr * ( 1 / (1 + (decay * iterations)))
-init_lr = 5e-4  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
+init_lr = 1e-2  # lr was too high and caused weights to go to NaN --> output NaN for Q-values
 lr_decay_factor = init_lr / (float(num_total_training_steps) / train_every_n_steps) # lr / (1. + lr_factor_decay) each train step
 dqn_agent.compile(SGD(lr=init_lr, decay=lr_decay_factor), metrics=['mae']) # not use mse since |reward| <= 1.0
 
-weights_filename = 'dqn_collision_avoidance_03312019_02.h5'
+weights_filename = 'dqn_collision_avoidance_03312019_sometimes_works.h5'
 #weights_filename = 'dqn_collision_avoidance_012619_03_coordconv_circleTheIntersection.h5'
-want_to_train = True
+want_to_train = False
 load_in_weights_in_weights_filename = True
 if want_to_train is True:
 
@@ -340,4 +340,4 @@ if want_to_train is True:
   dqn_agent.save_weights(weights_filename, overwrite=True)
 else: # else want to test
     dqn_agent.load_weights(weights_filename)
-    dqn_agent.test(env, nb_episodes=20, visualize=False)
+    dqn_agent.test(env, nb_episodes=200, visualize=False)

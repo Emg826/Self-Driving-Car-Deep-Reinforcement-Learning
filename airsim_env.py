@@ -356,7 +356,7 @@ class AirSimEnv(Env):
     self.current_distance_from_destination = self.total_distance_to_destination
     self.elapsed_episode_time_in_simulation_secs = 1.0
 
-    time.sleep(10)  # crash issue with requesting stuff before actually capable of resettting? idk
+    time.sleep(4)  # crash issue with requesting stuff before actually capable of resettting? idk
 
     list_of_img_response_objects = self._request_sim_images()
     car_info = self.client.getCarState()
@@ -429,6 +429,7 @@ class AirSimEnv(Env):
       reward = -0.1
 
     else:
+
       # will always be >= 0
       distance_reward =  self.current_distance_travelled_towards_destination / self.total_distance_to_destination
 
