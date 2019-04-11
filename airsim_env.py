@@ -285,7 +285,7 @@ class AirSimEnv(Env):
       else:
         self.collisions_in_a_row = 1
     if  car_info.kinematics_estimated.position.z_val < -0.698:
-      self.collisions_in_a_row = self.max_acceptable_collisions_in_a_row - 1
+      self.collisions_in_a_row = self.max_acceptable_collisions_in_a_row - 2
       self.obj_id_of_last_collision = collision_info.object_id
 
     
@@ -315,6 +315,8 @@ class AirSimEnv(Env):
       print(reward_t)
 
     self.previous_coords = car_info.kinematics_estimated.position
+
+        
 
     return state_t2, reward_t, done, {}
 
@@ -380,8 +382,8 @@ class AirSimEnv(Env):
          car_info.kinematics_estimated.position.z_val > -0.58 or \
          abs(car_info.kinematics_estimated.orientation.y_val) > 0.3125 or \
          car_info.speed > 17.0 or \
-         self.collisions_in_a_row > self.max_acceptable_collisions_in_a_row or \
-         car_info.kinematics_estimated.position.z_val < -2.0: # if on sidewalk
+         self.collisions_in_a_row > self.max_acceptable_collisions_in_a_row:
+          # if on sidewalk
         done = True
 
       if self._arrived_at_destination(car_info):
@@ -436,6 +438,7 @@ class AirSimEnv(Env):
       #reward = time_reward + distance_reward
       reward = max(0, distance_reward - 0.03)  # don't reward until get sufficiently far out - should help avoid driving in circles
 
+    print(reward)
     return reward
 
 
